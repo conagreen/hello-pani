@@ -8,6 +8,8 @@
 - **YAGNI 우선**: 요구사항 검증에 직접 필요하지 않은 도메인은 만들지 않는다.
 - **성공보다 거절이 많은 시스템**: 재고 10개를 제외한 대부분의 요청은 빠르게 실패한다.
 - **DB는 최종 진실**: Redis는 게이트와 멱등성 조기 차단에 사용하고, 최종 주문 / 결제 / 재고 기록은 DB가 가진다.
+- **Redis 통과는 성공이 아니다**: Redis gate는 DB에 진입할 후보 수를 제한할 뿐이다. 예약 가능 여부는 DB stock 조건부 UPDATE 성공으로 확정한다.
+- **장애 시 정합성 우선**: Redis 장애나 결과 불명 상태에서는 DB로 우회 판매하지 않는다. 남은 재고가 있어도 안전하게 판단할 수 없으면 fail-fast한다.
 - **외부 PG는 인터페이스로만 표현**: 실제 PG 연동은 생략하되, 멱등키 / 결과 조회 / 실패 처리는 도메인 흐름에 포함한다.
 - **회원 인증은 제외**: 사용자는 `X-User-Id` 헤더로 식별된다고 가정한다.
 
@@ -19,7 +21,7 @@
 |---|---|
 | GET Checkout API | 상품 정보, 가격, 입/퇴실 시간, 사용 가능 포인트, checkoutId 발급 |
 | POST Booking API | checkoutId 기반 예약 / 결제 / 주문 생성 |
-| 재고 10개 정합성 | Redis 게이트 + DB 조건부 UPDATE 재고 선점 |
+| 재고 10개 정합성 | Redis 게이트는 후보 수를 제한하고, DB 조건부 UPDATE가 최종 재고 선점을 확정 |
 | 선착순 공정성 | 단일 Redis 게이트에서 서버 도달 순서 기준 처리 |
 | 멱등성 | checkoutId를 내부 멱등키이자 PG 멱등키로 사용 |
 | 결제 수단 | 카드, Y페이, Y포인트 |
@@ -102,6 +104,7 @@
 
 - `qty`는 0 미만이 될 수 없다.
 - 최종 차감은 `UPDATE stock SET qty = qty - 1 WHERE product_id = ? AND qty > 0`로 수행한다.
+- 이 방식은 version 컬럼을 읽어 비교하는 낙관적 락이 아니다. Redis gate를 통과한 요청만 DB 단일 조건부 UPDATE로 재고를 선점한다.
 - Redis 카운터는 빠른 거절을 위한 게이트이며 최종 진실이 아니다.
 
 ### Checkout
@@ -355,8 +358,8 @@ reason 값:
 도메인 흐름:
 
 1. checkoutId 멱등키를 Redis `SETNX`로 점유한다.
-2. Checkout을 조회하고 사용자 / 만료 여부를 검증한다.
-3. 결제 조합과 금액 합계를 검증한다.
+2. Checkout을 조회하고 사용자 / 만료 여부를 검증한다. 이 단계에서 실패하면 `idempotency:{checkoutId}`를 삭제한다.
+3. 결제 조합과 금액 합계를 검증한다. 이 단계에서 실패하면 `idempotency:{checkoutId}`를 삭제한다.
 4. Redis 재고 게이트에서 점유 토큰을 얻는다.
 5. DB 트랜잭션에서 Stock을 조건부 UPDATE로 선점하고 Booking `PENDING_PAYMENT`, Payment `PROCESSING`을 생성한 뒤 커밋한다.
 6. 트랜잭션 밖에서 PaymentComponent를 순서대로 실행한다.
@@ -371,8 +374,8 @@ reason 값:
 | 실패 지점 | 처리 |
 |---|---|
 | Redis 멱등키 점유 실패 | 기존 결과 재생 또는 `409 processing` |
-| Checkout 없음 / 만료 / 사용자 불일치 | `400` 또는 `403`, 재고 게이트 진입 전 실패 |
-| 결제 조합 오류 | `400`, 재고 게이트 진입 전 실패 |
+| Checkout 없음 / 만료 / 사용자 불일치 | `400` 또는 `403`, 재고 게이트 진입 전 실패. SETNX로 잡은 멱등키는 삭제 |
+| 결제 조합 오류 | `400`, 재고 게이트 진입 전 실패. SETNX로 잡은 멱등키는 삭제 |
 | Redis 재고 게이트 실패 | `409 sold_out_or_processing` 또는 `503`. 정확한 잔여 재고는 노출하지 않고 `retryable`, `retryAfterSeconds`만 응답 |
 | DB Stock reserve 실패 | Redis gate 복구 후 `409 sold_out_or_processing` |
 | 포인트 부족 | Booking `FAILED`, DB stock 복구, Redis gate 복구 |
@@ -401,6 +404,15 @@ reason 값:
 - 결제 실패로 stock이 복구되면 DB stock과 Redis gate가 함께 복구된다.
 - 복구된 재고는 별도 알림이나 대기열 없이, 이후 서버 게이트에 도달한 재시도 요청이 획득한다.
 - 특정 사용자에게 복구 재고를 예약해 두지 않는다. 대기열 / 순번 보장은 이번 범위에서 제외한다.
+
+복구의 멱등성:
+
+- DB stock 복구와 Redis gate 복구는 같은 checkoutId에 대해 한 번만 수행한다.
+- 보상은 논리적으로 `point_refunded`, `db_stock_restored`, `redis_gate_restored` 단계로 나뉜다.
+- 각 단계는 checkoutId 기준으로 멱등하게 재실행 가능해야 한다.
+- `FAILED` → `COMPENSATING` → `COMPENSATED` 상태 전이가 전체 보상 완료의 기준이다.
+- `COMPENSATED` 상태에서 같은 checkoutId 보상이 다시 실행되면 point, stock, Redis gate를 다시 늘리지 않고 기존 결과를 반환한다.
+- Redis 복구가 실패해 `REFUND_FAILED`로 남은 경우에도 point와 DB stock이 이미 복구되었는지 먼저 확인한 뒤, 실패한 단계만 재시도한다.
 
 ## 상태 전이
 
@@ -540,6 +552,20 @@ erDiagram
 | `room` | 제외 | 숙소 객실 도메인까지 확장하지 않음 |
 | `coupon` | 제외 | 요구사항 없음 |
 | `refund` | 제외 | payment_component 상태와 보상 이력으로 충분 |
+
+DB 무결성 제약:
+
+- DB가 최종 진실이므로 핵심 관계에는 외래키를 둔다.
+- `stock.product_id` → `product.product_id`
+- `checkout.product_id` → `product.product_id`
+- `booking.checkout_id` → `checkout.checkout_id`
+- `booking.product_id` → `product.product_id`
+- `payment.checkout_id` → `checkout.checkout_id`
+- `payment.booking_id` → `booking.booking_id`
+- `payment_component.payment_id` → `payment.payment_id`
+- `point_ledger.user_id` → `point_account.user_id`
+- `point_ledger.checkout_id` → `checkout.checkout_id`
+- 포인트 ledger는 감사 이력의 성격이 강하므로 checkout 삭제를 전제로 하지 않는다. 이 프로젝트에서는 삭제 API를 두지 않는다.
 
 ## Redis 키
 

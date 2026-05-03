@@ -12,6 +12,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.TestPropertySource;
 import com.example.hellopani.catalog.infra.ProductRepository;
 import com.example.hellopani.checkout.domain.ProductNotFoundException;
 import com.example.hellopani.checkout.infra.CheckoutRepository;
@@ -22,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @JdbcTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@TestPropertySource(properties = "spring.main.allow-bean-definition-overriding=true")
 @Import({
         ProductRepository.class,
         PointRepository.class,

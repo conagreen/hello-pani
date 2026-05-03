@@ -32,7 +32,9 @@
 5. 문서와 구현의 핵심 불변식을 대조한다.
    - `schema.sql` 기준이 유지되는가
    - `docker-compose.yml`과 Spring Boot Docker Compose 실행 경로가 모두 유효한가
+   - Redis gate 통과를 예약 성공으로 간주하지 않는가
    - Redis 장애 시 DB 우회 fallback을 약속하거나 구현하지 않았는가
+   - 결제 실패 보상이 checkoutId 기준으로 중복 증가 없이 재실행 가능한가
    - 사용자 API가 잔여 재고 수량을 노출하지 않는가
 6. 발견한 문제는 우선순위와 함께 보고한다.
 

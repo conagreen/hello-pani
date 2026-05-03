@@ -29,9 +29,11 @@
    - `docker-compose.yml`은 MySQL / Redis 정의의 단일 원천
    - Spring Boot Docker Compose와 수동 `docker compose up -d` 경로를 모두 지원
    - Redis는 게이트, DB는 진실
+   - Redis gate 통과는 예약 성공이 아니라 DB 재고 선점 시도권
    - 결제는 DB 재고 선점 뒤에만 호출
    - 외부 PG 호출은 DB 트랜잭션 밖에서 수행
    - PG 결과 불명은 checkoutId / pgIdempotencyKey로 결과 조회
+   - 결제 실패 보상은 `point_refunded`, `db_stock_restored`, `redis_gate_restored` 단계별 멱등 재시도
    - 사용자 API는 잔여 재고 수량을 노출하지 않음
 4. 문서 간 표현이 다르면 다음 기준으로 정리한다.
    - 결정 근거는 `DECISIONS.md`에 둔다.

@@ -25,6 +25,7 @@
 - CLI로 인프라를 직접 확인하고 싶은 경우 `docker compose up -d` 후 `./gradlew bootRun`으로 실행할 수 있게 한다.
 - DB 스키마와 초기 데이터는 `schema.sql`로 관리한다.
 - MySQL은 최종 영속 저장소, Redis는 게이트와 멱등성 조기 차단 용도로 사용한다.
+- Redis gate 통과는 예약 성공이 아니라 DB 재고 선점 시도권 획득이다.
 - 사용자 식별은 `X-User-Id` 헤더를 신뢰한다.
 - 실제 PG SDK는 붙이지 않는다. `PgClient` 인터페이스와 Fake 구현으로 대체한다.
 - 잔여 재고 수량은 사용자 API 응답에 노출하지 않는다.
@@ -103,6 +104,7 @@
 - [x] `product`, `stock`, `checkout`, `booking`, `payment`, `payment_component`, `point_account`, `point_ledger` 테이블 생성
 - [x] unique 제약 추가: `booking.checkout_id`, `payment.checkout_id`
 - [x] 포인트 멱등 제약 추가: `point_ledger(checkout_id, reason)`
+- [ ] 핵심 외래키 제약 추가: `stock.product_id`, `checkout.product_id`, `booking.checkout_id`, `booking.product_id`, `payment.checkout_id`, `payment.booking_id`, `payment_component.payment_id`, `point_ledger.user_id`, `point_ledger.checkout_id`
 - [x] seed 데이터 추가: 한정 상품 1개, stock 10개, 테스트 사용자 포인트
 
 완료 조건:
@@ -132,20 +134,20 @@
 
 작업:
 
-- [ ] Product 조회 구현
-- [ ] PointAccount 조회 구현
-- [ ] Checkout 생성 구현
-- [ ] `GET /checkout?productId=...` API 구현
-- [ ] `X-User-Id` 헤더 검증
-- [ ] 응답에 `checkoutId`, 상품명, 가격, 대표 이미지, 입/퇴실 시간, 사용 가능 포인트, `expiresAt` 포함
-- [ ] 잔여 재고는 사용자 응답에 포함하지 않음
+- [x] Product 조회 구현
+- [x] PointAccount 조회 구현
+- [x] Checkout 생성 구현
+- [x] `GET /checkout?productId=...` API 구현
+- [x] `X-User-Id` 헤더 검증
+- [x] 응답에 `checkoutId`, 상품명, 가격, 대표 이미지, 입/퇴실 시간, 사용 가능 포인트, `expiresAt` 포함
+- [x] 잔여 재고는 사용자 응답에 포함하지 않음
 
 완료 조건:
 
-- [ ] 정상 checkout 발급 테스트 통과
-- [ ] 사용자 헤더 누락 테스트 통과
-- [ ] 같은 사용자가 여러 번 호출하면 서로 다른 checkoutId가 발급되는지 테스트
-- [ ] 잔여 재고 미노출 테스트 통과
+- [x] 정상 checkout 발급 테스트 통과
+- [x] 사용자 헤더 누락 테스트 통과
+- [x] 같은 사용자가 여러 번 호출하면 서로 다른 checkoutId가 발급되는지 테스트
+- [x] 잔여 재고 미노출 테스트 통과
 
 설계 불변식:
 
@@ -176,6 +178,7 @@
 - [ ] DB 조건부 UPDATE 재고 선점 구현
 - [ ] DB stock 복구 구현
 - [ ] Redis gate 복구 구현
+- [ ] checkoutId 기준 보상 상태를 확인해 DB stock과 Redis gate 복구가 한 번만 실행되도록 구현
 - [ ] Redis 초기화 커맨드 또는 seed 초기화 로직 추가
 
 완료 조건:
@@ -184,11 +187,13 @@
 - [ ] Redis gate 10개 통과 후 11번째 실패 테스트 통과
 - [ ] DB 조건부 UPDATE가 qty 0 이하로 내려가지 않는지 테스트
 - [ ] DB 선점 실패 시 Redis gate 복구 테스트 통과
+- [ ] 같은 checkoutId로 stock / Redis gate 복구를 반복 호출해도 재고가 중복 증가하지 않는지 테스트
 - [ ] 동시성 테스트에서 성공 예약 가능 수가 10개를 넘지 않음
 
 설계 불변식:
 
 - Redis는 게이트, DB는 진실이다.
+- Redis gate 통과는 예약 성공이 아니다. 최종 예약 가능 여부는 DB 조건부 UPDATE 성공 여부로 판단한다.
 - Redis gate를 통과하지 못한 요청은 DB 재고 선점으로 진행하지 않는다.
 - 결제는 DB 재고 선점 성공 이후에만 호출되어야 한다.
 
@@ -254,12 +259,14 @@
 - [ ] `POST /bookings` API 구현
 - [ ] Redis `idempotency:{checkoutId}` SETNX 처리
 - [ ] Checkout 사용자 / 만료 / 상태 검증
+- [ ] 재고 게이트 진입 전 검증 실패 시 `idempotency:{checkoutId}` 삭제
 - [ ] Redis gate 통과 처리
 - [ ] DB 트랜잭션에서 재고 선점, Booking `PENDING_PAYMENT`, Payment `PROCESSING` 생성
 - [ ] 트랜잭션 커밋 후 결제 실행
 - [ ] 결제 성공 시 Booking `CONFIRMED`, Checkout `USED` 처리
 - [ ] 확정 실패 시 DB stock 복구, Redis gate 복구, Booking `FAILED` 처리
 - [ ] 멱등 결과 캐시와 재요청 응답 재생 구현
+- [ ] DB 재고 선점 이후 실패는 실패 결과 또는 보상 상태를 남겨 같은 checkoutId 재요청이 같은 결과를 보게 함
 
 완료 조건:
 
@@ -299,6 +306,7 @@
 - [ ] Redis 장애 시 fail-fast 구현: 짧은 timeout, circuit breaker, `503 Retry-After`
 - [ ] 보상 실패 시 `REFUND_FAILED` 상태와 알림 로그 / 메트릭 처리
 - [ ] 같은 checkoutId로 보상 재실행 가능하게 구현
+- [ ] 보상 단계를 `point_refunded`, `db_stock_restored`, `redis_gate_restored`로 분리해 실패한 단계만 재시도 가능하게 구현
 
 완료 조건:
 
@@ -307,6 +315,7 @@
 - [ ] 만료 정리 잡이 성공 결제를 건드리지 않는지 테스트
 - [ ] Redis 장애 시 DB 우회 차감이 발생하지 않는지 테스트
 - [ ] 보상 실패 후 재실행 테스트 통과
+- [ ] DB stock 복구 성공 후 Redis gate 복구 실패 상황에서 재실행 시 DB stock이 중복 증가하지 않는지 테스트
 
 설계 불변식:
 
@@ -430,5 +439,7 @@
 - [ ] 동시 요청에서 성공 예약이 정확히 10건
 - [ ] 같은 checkoutId 중복 요청에서 결제 1건만 발생
 - [ ] 결제 실패 시 DB stock과 Redis gate 복구
+- [ ] 결제 실패 보상 재실행 시 DB stock과 Redis gate가 중복 증가하지 않음
 - [ ] Redis 장애 시 DB 우회 없이 `503`
+- [ ] 최종 점검 전 `docs/TASKS.md` 체크박스가 실제 구현 상태와 일치
 - [ ] README에 ERD 또는 DDL 포함

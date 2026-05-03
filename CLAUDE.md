@@ -25,12 +25,14 @@
 - 별도 DB 마이그레이션 도구를 도입하지 않는다.
 - MySQL은 최종 영속 저장소다.
 - Redis는 재고 게이트와 멱등성 조기 차단에 사용한다.
+- Redis gate 통과는 예약 성공이 아니라 DB 재고 선점 시도권 획득이다.
 - Redis 장애 시 DB로 우회하지 않고 fail-fast한다.
 - 잔여 재고 수량은 사용자 API 응답에 노출하지 않는다.
 - 결제는 DB 재고 선점이 성공한 뒤에만 호출한다.
 - DB 트랜잭션을 잡은 채 외부 PG 호출을 기다리지 않는다.
 - 실제 PG SDK는 붙이지 않는다. `PgClient` 인터페이스와 Fake 구현만 사용한다.
 - 같은 `checkoutId`의 POST Booking 요청은 같은 결과를 반환해야 한다.
+- 결제 실패 보상은 checkoutId 기준으로 멱등해야 하며, `point_refunded`, `db_stock_restored`, `redis_gate_restored` 단계 중 실패한 단계만 재시도한다.
 
 ## 로컬 실행 원칙
 
