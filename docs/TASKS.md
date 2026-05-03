@@ -63,21 +63,21 @@
 
 작업:
 
-- [ ] Gradle Kotlin DSL 프로젝트 생성
-- [ ] Java 21 설정
-- [ ] Spring Web, Validation, JDBC, Actuator, MySQL, Redis 의존성 추가
-- [ ] `developmentOnly("org.springframework.boot:spring-boot-docker-compose")` 추가
-- [ ] 기본 패키지 구조 생성
-- [ ] 로컬 개발용 `docker-compose.yml` 작성: MySQL, Redis
-- [ ] `/actuator/health` 확인 가능하게 구성
-- [ ] 기본 `application.yml` 작성
+- [x] Gradle Kotlin DSL 프로젝트 생성
+- [x] Java 21 설정
+- [x] Spring Web, Validation, JDBC, Actuator, MySQL, Redis 의존성 추가
+- [x] `developmentOnly("org.springframework.boot:spring-boot-docker-compose")` 추가
+- [x] 기본 패키지 구조 생성
+- [x] 로컬 개발용 `docker-compose.yml` 작성: MySQL, Redis
+- [x] `/actuator/health` 확인 가능하게 구성
+- [x] 기본 `application.yml` 작성
 
 완료 조건:
 
-- [ ] `./gradlew test` 통과
-- [ ] `./gradlew bootRun`으로 앱, MySQL, Redis가 함께 기동
-- [ ] `docker compose up -d` 후 `./gradlew bootRun`으로도 실행 가능
-- [ ] `/actuator/health` 성공
+- [x] `./gradlew test` 통과
+- [x] `./gradlew bootRun`으로 앱, MySQL, Redis가 함께 기동
+- [x] `docker compose up -d` 후 `./gradlew bootRun`으로도 실행 가능
+- [x] `/actuator/health` 성공
 
 설계 불변식:
 
@@ -99,17 +99,16 @@
 
 작업:
 
-- [ ] `schema.sql` 추가
-- [ ] `product`, `stock`, `checkout`, `booking`, `payment`, `payment_component`, `point_account`, `point_ledger` 테이블 생성
-- [ ] unique 제약 추가: `booking.checkout_id`, `payment.checkout_id`
-- [ ] 포인트 멱등 제약 추가: `point_ledger(checkout_id, reason)`
-- [ ] seed 데이터 추가: 한정 상품 1개, stock 10개, 테스트 사용자 포인트
-- [ ] Repository 기본 골격 추가
+- [x] `schema.sql` 추가
+- [x] `product`, `stock`, `checkout`, `booking`, `payment`, `payment_component`, `point_account`, `point_ledger` 테이블 생성
+- [x] unique 제약 추가: `booking.checkout_id`, `payment.checkout_id`
+- [x] 포인트 멱등 제약 추가: `point_ledger(checkout_id, reason)`
+- [x] seed 데이터 추가: 한정 상품 1개, stock 10개, 테스트 사용자 포인트
 
 완료 조건:
 
-- [ ] `schema.sql` 기반 스키마 초기화 테스트 통과
-- [ ] seed 데이터 로딩 테스트 통과
+- [x] `schema.sql` 기반 스키마 초기화 테스트 통과
+- [x] seed 데이터 로딩 테스트 통과
 - [ ] ERD 또는 DDL을 README 작성 시 재사용할 수 있는 형태로 정리
 
 설계 불변식:
