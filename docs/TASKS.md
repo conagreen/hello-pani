@@ -19,7 +19,7 @@
 
 ## 공통 구현 지시
 
-- Java 21, Spring Boot 3, Gradle Kotlin DSL을 기본으로 한다.
+- Java 21, Spring Boot 4, Gradle Kotlin DSL을 기본으로 한다.
 - 로컬 개발 인프라는 `docker-compose.yml`로 정의한다.
 - IntelliJ / Gradle 실행 경로에서는 Spring Boot Docker Compose 지원(`developmentOnly("org.springframework.boot:spring-boot-docker-compose")`)으로 MySQL / Redis를 자동 기동한다.
 - CLI로 인프라를 직접 확인하고 싶은 경우 `docker compose up -d` 후 `./gradlew bootRun`으로 실행할 수 있게 한다.
@@ -51,7 +51,7 @@
 
 목표:
 
-- Spring Boot 3 기반 프로젝트를 생성한다.
+- Spring Boot 4 기반 프로젝트를 생성한다.
 - 앱 실행 시 MySQL, Redis가 자동으로 함께 뜨는 로컬 개발 환경을 만든다.
 - 같은 `docker-compose.yml`로 수동 인프라 실행도 가능하게 한다.
 - 아직 비즈니스 기능은 넣지 않는다.

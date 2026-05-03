@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: hello-pani
+  datasource:
+    url: jdbc:mysql://localhost:3306/hellopani
+    username: hellopani
+    password: hellopani
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true

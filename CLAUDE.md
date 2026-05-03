@@ -20,7 +20,7 @@
 
 ## 구현 불변식
 
-- Java 21, Spring Boot 3, Gradle Kotlin DSL을 기본으로 한다.
+- Java 21, Spring Boot 4, Gradle Kotlin DSL을 기본으로 한다.
 - DB 스키마와 초기 데이터는 `schema.sql`로 관리한다.
 - 별도 DB 마이그레이션 도구를 도입하지 않는다.
 - MySQL은 최종 영속 저장소다.
