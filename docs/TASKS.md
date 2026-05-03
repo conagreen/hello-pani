@@ -45,7 +45,7 @@
 | 6 | Booking Orchestration | POST Booking 전체 유스케이스 연결 |
 | 7 | Failure Recovery and Resilience | 결과 불명, Redis 장애, 정리 잡 처리 |
 | 8 | Observability and Load Verification | 정합성, 멱등성, 장애 정책 검증 |
-| 9 | Final Documentation | 실행, 설계, 검증 방법 문서화 |
+| 9 | Documentation and Final Verification | 실행, 설계, 검증 방법 문서화 |
 
 ## Task 1. Project Bootstrap and Runtime
 
@@ -349,9 +349,12 @@
 - "정확히 10건 성공"을 자동 검증한다.
 - 부하 테스트가 구현되지 않은 기능을 전제로 삼으면 안 된다.
 
-## Task 9. Final Documentation
+## Task 9. Documentation and Final Verification
 
-목표: README만으로 실행, 설계, 검증 방법을 이해할 수 있게 한다.
+목표:
+
+- README만으로 실행, 설계, 검증 방법을 이해할 수 있게 한다.
+- 실행, 설계, 검증 방법이 실제 구현과 일치하는지 정리한다.
 
 입력 문서:
 
@@ -377,6 +380,7 @@
 - [ ] 새 clone 기준 README만 보고 실행 가능
 - [ ] README의 API 예시가 실제로 동작
 - [ ] README에 ERD 또는 DDL이 직접 포함되어 있음
+- [ ] README에 적은 실행 명령과 검증 명령이 실제 파일과 일치함
 
 설계 불변식:
 
@@ -390,7 +394,7 @@
 3. Task 5에서 결제 도메인을 Booking 밖에서 완성한다.
 4. Task 6에서 전체 POST Booking 흐름을 연결한다.
 5. Task 7에서 실패와 복구를 닫는다.
-6. Task 8-9에서 검증과 마무리 문서화를 완성한다.
+6. Task 8-9에서 검증과 문서화 경험을 완성한다.
 
 ## 요구사항 추적성
 
@@ -417,7 +421,7 @@
 - Redis Cluster 기본 구성
 - 관리자 API
 
-## 최종 점검 체크리스트
+## 최종 체크리스트
 
 - [ ] `./gradlew test` 통과
 - [ ] `./gradlew bootRun`으로 로컬 실행 가능
