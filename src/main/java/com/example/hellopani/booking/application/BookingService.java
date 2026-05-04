@@ -26,6 +26,7 @@ import com.example.hellopani.inventory.domain.RedisUnavailableException;
 import com.example.hellopani.inventory.domain.StockGate;
 import com.example.hellopani.inventory.domain.StockReserveFailedException;
 import com.example.hellopani.inventory.infra.StockRepository;
+import com.example.hellopani.observability.AppMetrics;
 import com.example.hellopani.payment.application.PaymentExecutionInput;
 import com.example.hellopani.payment.application.PaymentExecutionResult;
 import com.example.hellopani.payment.application.PaymentService;
@@ -55,6 +56,7 @@ public class BookingService {
     private final ObjectMapper objectMapper;
     private final InventoryProperties inventoryProperties;
     private final Clock clock;
+    private final AppMetrics appMetrics;
 
     public BookingService(IdempotencyService idempotencyService,
                           CheckoutRepository checkoutRepository,
@@ -69,7 +71,8 @@ public class BookingService {
                           PlatformTransactionManager transactionManager,
                           ObjectMapper objectMapper,
                           InventoryProperties inventoryProperties,
-                          Clock clock) {
+                          Clock clock,
+                          AppMetrics appMetrics) {
         this.idempotencyService = idempotencyService;
         this.checkoutRepository = checkoutRepository;
         this.stockGate = stockGate;
@@ -84,6 +87,7 @@ public class BookingService {
         this.objectMapper = objectMapper;
         this.inventoryProperties = inventoryProperties;
         this.clock = clock;
+        this.appMetrics = appMetrics;
     }
 
     public BookingExecutionResult handle(BookingHandleInput input) {
@@ -91,6 +95,7 @@ public class BookingService {
         try {
             acquisition = idempotencyService.tryAcquire(input.checkoutId());
         } catch (RedisUnavailableException e) {
+            appMetrics.http503RedisUnavailable();
             return new BookingExecutionResult.Rejected(
                     input.checkoutId(),
                     BookingExecutionResult.RejectionCode.REDIS_UNAVAILABLE,
@@ -128,6 +133,7 @@ public class BookingService {
         try {
             gateResult = stockGate.tryAcquire(checkout.productId(), input.userId(), input.checkoutId());
         } catch (RedisUnavailableException e) {
+            appMetrics.http503RedisUnavailable();
             idempotencyService.release(input.checkoutId());
             return new BookingExecutionResult.Rejected(
                     input.checkoutId(),
@@ -137,6 +143,7 @@ public class BookingService {
                     "Service temporarily unavailable");
         }
         if (gateResult instanceof GateAcquireResult.Rejected rejected) {
+            appMetrics.redisGateRejected();
             idempotencyService.release(input.checkoutId());
             return new BookingExecutionResult.Rejected(
                     input.checkoutId(),
@@ -145,11 +152,14 @@ public class BookingService {
                     rejected.retryAfterSeconds(),
                     "sold out or processing");
         }
+        appMetrics.redisGateSuccess();
 
         ReservationOutput reservation;
         try {
             reservation = reserveInTransaction(input, checkout, requests);
+            appMetrics.dbStockReserveSuccess();
         } catch (StockReserveFailedException e) {
+            appMetrics.dbStockReserveFailure();
             stockGate.release(checkout.productId(), input.checkoutId());
             idempotencyService.release(input.checkoutId());
             return new BookingExecutionResult.Rejected(
@@ -251,13 +261,18 @@ public class BookingService {
                                                            PaymentExecutionResult payResult,
                                                            long pointRefundAmount) {
         return switch (payResult) {
-            case PaymentExecutionResult.Succeeded s -> transactionTemplate.execute(status -> {
-                bookingRepository.markConfirmed(reservation.bookingId(), LocalDateTime.now(clock));
-                checkoutRepository.markUsed(input.checkoutId());
-                return (BookingExecutionResult) new BookingExecutionResult.Confirmed(
-                        input.checkoutId(), reservation.bookingId(), reservation.paymentId());
-            });
+            case PaymentExecutionResult.Succeeded s -> {
+                BookingExecutionResult confirmed = transactionTemplate.execute(status -> {
+                    bookingRepository.markConfirmed(reservation.bookingId(), LocalDateTime.now(clock));
+                    checkoutRepository.markUsed(input.checkoutId());
+                    return (BookingExecutionResult) new BookingExecutionResult.Confirmed(
+                            input.checkoutId(), reservation.bookingId(), reservation.paymentId());
+                });
+                appMetrics.bookingConfirmed();
+                yield confirmed;
+            }
             case PaymentExecutionResult.Failed f -> {
+                appMetrics.paymentFailure(f.reason());
                 // Composer가 이미 PointPayment.refund를 역순 보상으로 호출했더라도,
                 // CompensationService 호출 시 ledger UNIQUE로 멱등 처리되고 POINT_REFUNDED step 기록까지 일관.
                 compensationService.compensate(new CompensationContext(
