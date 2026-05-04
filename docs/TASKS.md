@@ -21,7 +21,8 @@
 
 - Java 21, Spring Boot 4, Gradle Kotlin DSL을 기본으로 한다.
 - 로컬 개발 인프라는 `docker-compose.yml`로 정의한다.
-- IntelliJ / Gradle 실행 경로에서는 Spring Boot Docker Compose 지원(`developmentOnly("org.springframework.boot:spring-boot-docker-compose")`)으로 MySQL / Redis를 자동 기동한다.
+- IntelliJ / Gradle 실행 경로와 `./gradlew test` 모두에서 Spring Boot Docker Compose 지원(
+  `testAndDevelopmentOnly("org.springframework.boot:spring-boot-docker-compose")`)으로 MySQL / Redis를 자동 기동한다.
 - CLI로 인프라를 직접 확인하고 싶은 경우 `docker compose up -d` 후 `./gradlew bootRun`으로 실행할 수 있게 한다.
 - DB 스키마와 초기 데이터는 `schema.sql`로 관리한다.
 - MySQL은 최종 영속 저장소, Redis는 게이트와 멱등성 조기 차단 용도로 사용한다.
@@ -67,7 +68,7 @@
 - [x] Gradle Kotlin DSL 프로젝트 생성
 - [x] Java 21 설정
 - [x] Spring Web, Validation, JDBC, Actuator, MySQL, Redis 의존성 추가
-- [x] `developmentOnly("org.springframework.boot:spring-boot-docker-compose")` 추가
+- [x] `testAndDevelopmentOnly("org.springframework.boot:spring-boot-docker-compose")` 추가
 - [x] 기본 패키지 구조 생성
 - [x] 로컬 개발용 `docker-compose.yml` 작성: MySQL, Redis
 - [x] `/actuator/health` 확인 가능하게 구성
@@ -256,26 +257,26 @@
 
 작업:
 
-- [ ] `POST /bookings` API 구현
-- [ ] Redis `idempotency:{checkoutId}` SETNX 처리
-- [ ] Checkout 사용자 / 만료 / 상태 검증
-- [ ] 재고 게이트 진입 전 검증 실패 시 `idempotency:{checkoutId}` 삭제
-- [ ] Redis gate 통과 처리
-- [ ] DB 트랜잭션에서 재고 선점, Booking `PENDING_PAYMENT`, Payment `PROCESSING` 생성
-- [ ] 트랜잭션 커밋 후 결제 실행
-- [ ] 결제 성공 시 Booking `CONFIRMED`, Checkout `USED` 처리
-- [ ] 확정 실패 시 DB stock 복구, Redis gate 복구, Booking `FAILED` 처리
-- [ ] 멱등 결과 캐시와 재요청 응답 재생 구현
-- [ ] DB 재고 선점 이후 실패는 실패 결과 또는 보상 상태를 남겨 같은 checkoutId 재요청이 같은 결과를 보게 함
+- [x] `POST /bookings` API 구현
+- [x] Redis `idempotency:{checkoutId}` SETNX 처리
+- [x] Checkout 사용자 / 만료 / 상태 검증
+- [x] 재고 게이트 진입 전 검증 실패 시 `idempotency:{checkoutId}` 삭제
+- [x] Redis gate 통과 처리
+- [x] DB 트랜잭션에서 재고 선점, Booking `PENDING_PAYMENT`, Payment `PROCESSING` 생성
+- [x] 트랜잭션 커밋 후 결제 실행
+- [x] 결제 성공 시 Booking `CONFIRMED`, Checkout `USED` 처리
+- [x] 확정 실패 시 DB stock 복구, Redis gate 복구, Booking `FAILED` 처리
+- [x] 멱등 결과 캐시와 재요청 응답 재생 구현
+- [x] DB 재고 선점 이후 실패는 실패 결과 또는 보상 상태를 남겨 같은 checkoutId 재요청이 같은 결과를 보게 함
 
 완료 조건:
 
-- [ ] 정상 Booking 성공 테스트 통과
-- [ ] 같은 checkoutId 동시 요청 시 결제 1회만 수행되는지 테스트
-- [ ] checkoutId 사용자 불일치 거절 테스트 통과
-- [ ] checkout 만료 거절 테스트 통과
-- [ ] Redis gate 실패 시 정확한 잔여 재고 없이 실패 응답 테스트 통과
-- [ ] 결제 실패 후 재고와 Redis gate 복구 테스트 통과
+- [x] 정상 Booking 성공 테스트 통과
+- [x] 같은 checkoutId 동시 요청 시 결제 1회만 수행되는지 테스트
+- [x] checkoutId 사용자 불일치 거절 테스트 통과
+- [x] checkout 만료 거절 테스트 통과
+- [x] Redis gate 실패 시 정확한 잔여 재고 없이 실패 응답 테스트 통과
+- [x] 결제 실패 후 재고와 Redis gate 복구 테스트 통과
 
 설계 불변식:
 

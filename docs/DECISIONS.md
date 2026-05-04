@@ -706,7 +706,7 @@ interface StockJpaRepository extends JpaRepository<Stock, Long> {
 
 ```kotlin
 dependencies {
-    developmentOnly("org.springframework.boot:spring-boot-docker-compose")
+    testAndDevelopmentOnly("org.springframework.boot:spring-boot-docker-compose")
 }
 ```
 

@@ -1,7 +1,10 @@
 package com.example.hellopani.payment.application;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import com.example.hellopani.payment.domain.AmountMismatchException;
+import com.example.hellopani.payment.domain.ChargeRequest;
 import com.example.hellopani.payment.domain.FailureReason;
 import com.example.hellopani.payment.domain.InvalidCompositionException;
 import com.example.hellopani.payment.domain.Payment;
@@ -29,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
-@DisplayName("PaymentService — 결제 도메인 통합 시나리오 (TASKS Task 5 완료 조건 7개)")
+@DisplayName("PaymentService — Composer 호출과 Payment/Component 상태 finalize")
 class PaymentServiceTest {
 
     @Autowired
@@ -96,9 +100,10 @@ class PaymentServiceTest {
     @Test
     @DisplayName("[완료조건] 카드 단독 결제 — Payment SUCCEEDED, component SUCCEEDED + externalTxId 기록")
     void cardOnly_succeeds() {
-        PaymentExecutionResult result = paymentService.execute(new PaymentExecutionContext(
-                checkoutId, bookingId, "test-user-1", 150_000L,
-                List.of(new PaymentExecutionContext.ComponentRequest(PaymentMethodType.CARD, 150_000L))));
+        PaymentExecutionInput input = prepare(150_000L, List.of(
+                new Spec(PaymentMethodType.CARD, 150_000L)));
+
+        PaymentExecutionResult result = paymentService.execute(input);
 
         assertThat(result).isInstanceOf(PaymentExecutionResult.Succeeded.class);
         Payment payment = paymentRepository.findById(result.paymentId()).orElseThrow();
@@ -115,9 +120,10 @@ class PaymentServiceTest {
     @Test
     @DisplayName("[완료조건] 포인트 단독 결제 — 잔액 0으로 차감, Payment SUCCEEDED")
     void pointOnly_succeeds() {
-        PaymentExecutionResult result = paymentService.execute(new PaymentExecutionContext(
-                checkoutId, bookingId, "test-user-1", 50_000L,
-                List.of(new PaymentExecutionContext.ComponentRequest(PaymentMethodType.POINT, 50_000L))));
+        PaymentExecutionInput input = prepare(50_000L, List.of(
+                new Spec(PaymentMethodType.POINT, 50_000L)));
+
+        PaymentExecutionResult result = paymentService.execute(input);
 
         assertThat(result).isInstanceOf(PaymentExecutionResult.Succeeded.class);
         assertThat(pointRepository.findByUserId("test-user-1").orElseThrow().balance()).isZero();
@@ -128,12 +134,11 @@ class PaymentServiceTest {
     @Test
     @DisplayName("[완료조건] 포인트 + 카드 복합 결제 — 두 component 모두 SUCCEEDED, Payment SUCCEEDED")
     void pointPlusCard_succeeds() {
-        PaymentExecutionResult result = paymentService.execute(new PaymentExecutionContext(
-                checkoutId, bookingId, "test-user-1", 150_000L,
-                List.of(
-                        new PaymentExecutionContext.ComponentRequest(PaymentMethodType.POINT, 50_000L),
-                        new PaymentExecutionContext.ComponentRequest(PaymentMethodType.CARD, 100_000L)
-                )));
+        PaymentExecutionInput input = prepare(150_000L, List.of(
+                new Spec(PaymentMethodType.POINT, 50_000L),
+                new Spec(PaymentMethodType.CARD, 100_000L)));
+
+        PaymentExecutionResult result = paymentService.execute(input);
 
         assertThat(result).isInstanceOf(PaymentExecutionResult.Succeeded.class);
         assertThat(pointRepository.findByUserId("test-user-1").orElseThrow().balance()).isZero();
@@ -148,25 +153,21 @@ class PaymentServiceTest {
     @Test
     @DisplayName("[완료조건] 카드 + Y페이 금지 — charge 시작 전 InvalidCompositionException")
     void cardPlusYPay_isRejectedByValidator() {
-        PaymentExecutionContext ctx = new PaymentExecutionContext(
-                checkoutId, bookingId, "test-user-1", 150_000L,
-                List.of(
-                        new PaymentExecutionContext.ComponentRequest(PaymentMethodType.CARD, 50_000L),
-                        new PaymentExecutionContext.ComponentRequest(PaymentMethodType.Y_PAY, 100_000L)
-                ));
+        PaymentExecutionInput input = prepare(150_000L, List.of(
+                new Spec(PaymentMethodType.CARD, 50_000L),
+                new Spec(PaymentMethodType.Y_PAY, 100_000L)));
 
-        assertThatThrownBy(() -> paymentService.execute(ctx))
+        assertThatThrownBy(() -> paymentService.execute(input))
                 .isInstanceOf(InvalidCompositionException.class);
     }
 
     @Test
     @DisplayName("component 합계 ≠ totalAmount는 AmountMismatchException으로 거절된다")
     void amountMismatch_isRejectedByValidator() {
-        PaymentExecutionContext ctx = new PaymentExecutionContext(
-                checkoutId, bookingId, "test-user-1", 150_000L,
-                List.of(new PaymentExecutionContext.ComponentRequest(PaymentMethodType.CARD, 100_000L)));
+        PaymentExecutionInput input = prepare(150_000L, List.of(
+                new Spec(PaymentMethodType.CARD, 100_000L)));
 
-        assertThatThrownBy(() -> paymentService.execute(ctx))
+        assertThatThrownBy(() -> paymentService.execute(input))
                 .isInstanceOf(AmountMismatchException.class);
     }
 
@@ -176,12 +177,11 @@ class PaymentServiceTest {
         long cardAmount = FakePgClient.TRIGGER_CARD_DECLINED;
         long pointAmount = 50_000L;
 
-        PaymentExecutionResult result = paymentService.execute(new PaymentExecutionContext(
-                checkoutId, bookingId, "test-user-1", pointAmount + cardAmount,
-                List.of(
-                        new PaymentExecutionContext.ComponentRequest(PaymentMethodType.POINT, pointAmount),
-                        new PaymentExecutionContext.ComponentRequest(PaymentMethodType.CARD, cardAmount)
-                )));
+        PaymentExecutionInput input = prepare(pointAmount + cardAmount, List.of(
+                new Spec(PaymentMethodType.POINT, pointAmount),
+                new Spec(PaymentMethodType.CARD, cardAmount)));
+
+        PaymentExecutionResult result = paymentService.execute(input);
 
         assertThat(result).isInstanceOf(PaymentExecutionResult.Failed.class);
         PaymentExecutionResult.Failed failed = (PaymentExecutionResult.Failed) result;
@@ -208,12 +208,11 @@ class PaymentServiceTest {
         long cardAmount = FakePgClient.TRIGGER_RESULT_PENDING;
         long pointAmount = 50_000L;
 
-        PaymentExecutionResult result = paymentService.execute(new PaymentExecutionContext(
-                checkoutId, bookingId, "test-user-1", pointAmount + cardAmount,
-                List.of(
-                        new PaymentExecutionContext.ComponentRequest(PaymentMethodType.POINT, pointAmount),
-                        new PaymentExecutionContext.ComponentRequest(PaymentMethodType.CARD, cardAmount)
-                )));
+        PaymentExecutionInput input = prepare(pointAmount + cardAmount, List.of(
+                new Spec(PaymentMethodType.POINT, pointAmount),
+                new Spec(PaymentMethodType.CARD, cardAmount)));
+
+        PaymentExecutionResult result = paymentService.execute(input);
 
         assertThat(result).isInstanceOf(PaymentExecutionResult.Pending.class);
         PaymentExecutionResult.Pending pending = (PaymentExecutionResult.Pending) result;
@@ -233,5 +232,21 @@ class PaymentServiceTest {
                 .filter(c -> c.method() == PaymentMethodType.CARD).findFirst().orElseThrow();
         assertThat(point.status()).isEqualTo(PaymentComponentStatus.SUCCEEDED);
         assertThat(card.status()).isEqualTo(PaymentComponentStatus.PENDING);
+    }
+
+    private record Spec(PaymentMethodType type, long amount) {
+    }
+
+    private PaymentExecutionInput prepare(long totalAmount, List<Spec> specs) {
+        long paymentId = paymentRepository.insertProcessing(
+                checkoutId, bookingId, "test-user-1", totalAmount, checkoutId);
+        Map<PaymentMethodType, Long> componentIds = new EnumMap<>(PaymentMethodType.class);
+        List<ChargeRequest> requests = new ArrayList<>();
+        for (Spec spec : specs) {
+            long componentId = componentRepository.insertPending(paymentId, spec.type(), spec.amount());
+            componentIds.put(spec.type(), componentId);
+            requests.add(new ChargeRequest(checkoutId, "test-user-1", spec.type(), spec.amount()));
+        }
+        return new PaymentExecutionInput(paymentId, totalAmount, requests, componentIds);
     }
 }

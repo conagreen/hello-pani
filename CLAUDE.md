@@ -38,10 +38,10 @@
 
 - `docker-compose.yml`은 MySQL / Redis 정의의 단일 원천이다.
 - IntelliJ / Gradle 실행 경로는 Spring Boot Docker Compose를 사용한다.
-- Gradle 의존성에는 다음 개발 전용 의존성을 포함한다.
+- Gradle 의존성에는 다음 의존성을 포함한다. `testAndDevelopmentOnly`로 두어 `./gradlew bootRun`과 `./gradlew test` 모두 인프라가 자동 기동되게 한다.
 
 ```kotlin
-developmentOnly("org.springframework.boot:spring-boot-docker-compose")
+testAndDevelopmentOnly("org.springframework.boot:spring-boot-docker-compose")
 ```
 
 - 기본 실행 경로는 `./gradlew bootRun`이다.
