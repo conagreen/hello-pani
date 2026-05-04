@@ -55,4 +55,12 @@ public class FakePgClient implements PgClient {
         resultsByKey.clear();
         txCounter.set(0);
     }
+
+    /**
+     * Test helper: pre-seed a PG result for a given idempotency key without going through {@link #charge}.
+     * Useful when simulating "PG eventually returns Approved/Declined" for resolution-job tests.
+     */
+    public void primeResult(String pgIdempotencyKey, PgChargeResult result) {
+        resultsByKey.put(pgIdempotencyKey, result);
+    }
 }

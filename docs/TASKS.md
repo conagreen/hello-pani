@@ -300,23 +300,23 @@
 
 작업:
 
-- [ ] PG 결과 조회 재시도 잡 구현
-- [ ] `RESULT_PENDING` 상태의 hold TTL 연장 구현
-- [ ] Checkout / Booking 만료 정리 잡 구현
-- [ ] 정리 잡에서 Booking / Payment 상태 확인 후 멱등 복구
-- [ ] Redis 장애 시 fail-fast 구현: 짧은 timeout, circuit breaker, `503 Retry-After`
-- [ ] 보상 실패 시 `REFUND_FAILED` 상태와 알림 로그 / 메트릭 처리
-- [ ] 같은 checkoutId로 보상 재실행 가능하게 구현
-- [ ] 보상 단계를 `point_refunded`, `db_stock_restored`, `redis_gate_restored`로 분리해 실패한 단계만 재시도 가능하게 구현
+- [x] PG 결과 조회 재시도 잡 구현
+- [x] `RESULT_PENDING` 상태의 hold TTL 연장 구현
+- [x] Checkout / Booking 만료 정리 잡 구현
+- [x] 정리 잡에서 Booking / Payment 상태 확인 후 멱등 복구
+- [x] Redis 장애 시 fail-fast 구현: 짧은 timeout, circuit breaker, `503 Retry-After`
+- [x] 보상 실패 시 `REFUND_FAILED` 상태와 알림 로그 / 메트릭 처리
+- [x] 같은 checkoutId로 보상 재실행 가능하게 구현
+- [x] 보상 단계를 `point_refunded`, `db_stock_restored`, `redis_gate_restored`로 분리해 실패한 단계만 재시도 가능하게 구현
 
 완료 조건:
 
-- [ ] PG 응답 미수신 후 결과 조회 성공 테스트 통과
-- [ ] PG 응답 미수신 후 결과 조회 실패 테스트 통과
-- [ ] 만료 정리 잡이 성공 결제를 건드리지 않는지 테스트
-- [ ] Redis 장애 시 DB 우회 차감이 발생하지 않는지 테스트
-- [ ] 보상 실패 후 재실행 테스트 통과
-- [ ] DB stock 복구 성공 후 Redis gate 복구 실패 상황에서 재실행 시 DB stock이 중복 증가하지 않는지 테스트
+- [x] PG 응답 미수신 후 결과 조회 성공 테스트 통과
+- [x] PG 응답 미수신 후 결과 조회 실패 테스트 통과
+- [x] 만료 정리 잡이 성공 결제를 건드리지 않는지 테스트
+- [x] Redis 장애 시 DB 우회 차감이 발생하지 않는지 테스트
+- [x] 보상 실패 후 재실행 테스트 통과
+- [x] DB stock 복구 성공 후 Redis gate 복구 실패 상황에서 재실행 시 DB stock이 중복 증가하지 않는지 테스트
 
 설계 불변식:
 

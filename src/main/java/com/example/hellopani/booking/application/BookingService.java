@@ -18,8 +18,11 @@ import com.example.hellopani.checkout.domain.CheckoutNotFoundException;
 import com.example.hellopani.checkout.domain.CheckoutOwnershipMismatchException;
 import com.example.hellopani.checkout.domain.CheckoutStatus;
 import com.example.hellopani.checkout.infra.CheckoutRepository;
+import com.example.hellopani.compensation.application.CompensationContext;
+import com.example.hellopani.compensation.application.CompensationService;
 import com.example.hellopani.inventory.application.InventoryProperties;
 import com.example.hellopani.inventory.domain.GateAcquireResult;
+import com.example.hellopani.inventory.domain.RedisUnavailableException;
 import com.example.hellopani.inventory.domain.StockGate;
 import com.example.hellopani.inventory.domain.StockReserveFailedException;
 import com.example.hellopani.inventory.infra.StockRepository;
@@ -47,6 +50,7 @@ public class BookingService {
     private final PaymentComponentRepository paymentComponentRepository;
     private final PaymentValidator paymentValidator;
     private final PaymentService paymentService;
+    private final CompensationService compensationService;
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
     private final InventoryProperties inventoryProperties;
@@ -61,6 +65,7 @@ public class BookingService {
                           PaymentComponentRepository paymentComponentRepository,
                           PaymentValidator paymentValidator,
                           PaymentService paymentService,
+                          CompensationService compensationService,
                           PlatformTransactionManager transactionManager,
                           ObjectMapper objectMapper,
                           InventoryProperties inventoryProperties,
@@ -74,6 +79,7 @@ public class BookingService {
         this.paymentComponentRepository = paymentComponentRepository;
         this.paymentValidator = paymentValidator;
         this.paymentService = paymentService;
+        this.compensationService = compensationService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.objectMapper = objectMapper;
         this.inventoryProperties = inventoryProperties;
@@ -81,7 +87,17 @@ public class BookingService {
     }
 
     public BookingExecutionResult handle(BookingHandleInput input) {
-        IdempotencyAcquisition acquisition = idempotencyService.tryAcquire(input.checkoutId());
+        IdempotencyAcquisition acquisition;
+        try {
+            acquisition = idempotencyService.tryAcquire(input.checkoutId());
+        } catch (RedisUnavailableException e) {
+            return new BookingExecutionResult.Rejected(
+                    input.checkoutId(),
+                    BookingExecutionResult.RejectionCode.REDIS_UNAVAILABLE,
+                    true,
+                    inventoryProperties.soldOutRetryAfterSeconds(),
+                    "Service temporarily unavailable");
+        }
         return switch (acquisition) {
             case ALREADY_DONE -> idempotencyService.findCachedResult(input.checkoutId())
                     .<BookingExecutionResult>map(json -> new BookingExecutionResult.Replayed(input.checkoutId(), json))
@@ -108,8 +124,18 @@ public class BookingService {
             return e.result;
         }
 
-        GateAcquireResult gateResult = stockGate.tryAcquire(
-                checkout.productId(), input.userId(), input.checkoutId());
+        GateAcquireResult gateResult;
+        try {
+            gateResult = stockGate.tryAcquire(checkout.productId(), input.userId(), input.checkoutId());
+        } catch (RedisUnavailableException e) {
+            idempotencyService.release(input.checkoutId());
+            return new BookingExecutionResult.Rejected(
+                    input.checkoutId(),
+                    BookingExecutionResult.RejectionCode.REDIS_UNAVAILABLE,
+                    true,
+                    inventoryProperties.soldOutRetryAfterSeconds(),
+                    "Service temporarily unavailable");
+        }
         if (gateResult instanceof GateAcquireResult.Rejected rejected) {
             idempotencyService.release(input.checkoutId());
             return new BookingExecutionResult.Rejected(
@@ -137,8 +163,13 @@ public class BookingService {
         PaymentExecutionResult payResult = paymentService.execute(new PaymentExecutionInput(
                 reservation.paymentId(), totalAmount, requests, reservation.componentIds()));
 
+        long pointRefundAmount = requests.stream()
+                .filter(r -> r.type() == PaymentMethodType.POINT)
+                .mapToLong(ChargeRequest::amount)
+                .findFirst()
+                .orElse(0L);
         BookingExecutionResult result = finalizePostReservation(
-                input, checkout, reservation, payResult);
+                input, checkout, reservation, payResult, pointRefundAmount);
         idempotencyService.completeWithResult(input.checkoutId(), serialize(toPayload(result)));
         return result;
     }
@@ -217,18 +248,23 @@ public class BookingService {
     private BookingExecutionResult finalizePostReservation(BookingHandleInput input,
                                                            Checkout checkout,
                                                            ReservationOutput reservation,
-                                                           PaymentExecutionResult payResult) {
-        return transactionTemplate.execute(status -> switch (payResult) {
-            case PaymentExecutionResult.Succeeded s -> {
+                                                           PaymentExecutionResult payResult,
+                                                           long pointRefundAmount) {
+        return switch (payResult) {
+            case PaymentExecutionResult.Succeeded s -> transactionTemplate.execute(status -> {
                 bookingRepository.markConfirmed(reservation.bookingId(), LocalDateTime.now(clock));
                 checkoutRepository.markUsed(input.checkoutId());
-                yield (BookingExecutionResult) new BookingExecutionResult.Confirmed(
+                return (BookingExecutionResult) new BookingExecutionResult.Confirmed(
                         input.checkoutId(), reservation.bookingId(), reservation.paymentId());
-            }
+            });
             case PaymentExecutionResult.Failed f -> {
-                bookingRepository.markFailed(reservation.bookingId());
-                stockRepository.increment(checkout.productId());
-                stockGate.release(checkout.productId(), input.checkoutId());
+                // Composer가 이미 PointPayment.refund를 역순 보상으로 호출했더라도,
+                // CompensationService 호출 시 ledger UNIQUE로 멱등 처리되고 POINT_REFUNDED step 기록까지 일관.
+                compensationService.compensate(new CompensationContext(
+                        input.checkoutId(), input.userId(), checkout.productId(),
+                        pointRefundAmount, reservation.paymentId()));
+                transactionTemplate.executeWithoutResult(status ->
+                        bookingRepository.markFailed(reservation.bookingId()));
                 yield new BookingExecutionResult.Failed(
                         input.checkoutId(), reservation.bookingId(), reservation.paymentId(),
                         f.reason().name());
@@ -236,8 +272,9 @@ public class BookingService {
             case PaymentExecutionResult.Pending p -> new BookingExecutionResult.Pending(
                     input.checkoutId(), reservation.bookingId(), reservation.paymentId(),
                     p.pgIdempotencyKey());
-        });
+        };
     }
+
 
     private BookingResultPayload toPayload(BookingExecutionResult result) {
         return switch (result) {

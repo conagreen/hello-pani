@@ -60,6 +60,7 @@ class BookingControllerTest {
 
     @AfterEach
     void cleanupRows() {
+        jdbcTemplate.update("DELETE FROM compensation_step WHERE checkout_id LIKE 'ck-bk-%'");
         jdbcTemplate.update("DELETE FROM payment_component WHERE payment_id IN "
                 + "(SELECT payment_id FROM payment WHERE checkout_id LIKE 'ck-bk-%')");
         jdbcTemplate.update("DELETE FROM payment WHERE checkout_id LIKE 'ck-bk-%'");

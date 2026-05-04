@@ -71,6 +71,7 @@ public class BookingController {
             case CHECKOUT_EXPIRED, INVALID_COMPOSITION, AMOUNT_MISMATCH -> HttpStatus.BAD_REQUEST;
             case CHECKOUT_ALREADY_CONSUMED, SOLD_OUT_OR_PROCESSING, DUPLICATE_REQUEST_PROCESSING ->
                     HttpStatus.CONFLICT;
+            case REDIS_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
         };
     }
 }

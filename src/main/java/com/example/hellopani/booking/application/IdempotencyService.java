@@ -1,9 +1,11 @@
 package com.example.hellopani.booking.application;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import java.time.Duration;
 import java.util.Optional;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import com.example.hellopani.inventory.domain.RedisUnavailableException;
 
 @Component
 public class IdempotencyService {
@@ -18,6 +20,7 @@ public class IdempotencyService {
         this.redisTemplate = redisTemplate;
     }
 
+    @CircuitBreaker(name = "redis", fallbackMethod = "tryAcquireFallback")
     public IdempotencyAcquisition tryAcquire(String checkoutId) {
         Boolean acquired = redisTemplate.opsForValue()
                 .setIfAbsent(stateKey(checkoutId), VALUE_PROCESSING, TTL);
@@ -29,6 +32,11 @@ public class IdempotencyService {
             return IdempotencyAcquisition.ALREADY_DONE;
         }
         return IdempotencyAcquisition.ALREADY_PROCESSING;
+    }
+
+    @SuppressWarnings("unused")
+    private IdempotencyAcquisition tryAcquireFallback(String checkoutId, Throwable t) {
+        throw new RedisUnavailableException("Redis idempotency unavailable (timeout or circuit open)", t);
     }
 
     public void release(String checkoutId) {

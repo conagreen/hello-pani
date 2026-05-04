@@ -99,6 +99,17 @@ CREATE TABLE IF NOT EXISTS point_ledger (
     CONSTRAINT fk_point_ledger_checkout FOREIGN KEY (checkout_id) REFERENCES checkout (checkout_id)
 );
 
+CREATE TABLE IF NOT EXISTS compensation_step (
+    compensation_step_id BIGINT      NOT NULL AUTO_INCREMENT,
+    checkout_id          CHAR(36)    NOT NULL,
+    step                 VARCHAR(32) NOT NULL,
+    completed_at         DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (compensation_step_id),
+    CONSTRAINT uk_compensation_step UNIQUE (checkout_id, step),
+    CONSTRAINT chk_compensation_step CHECK (step IN ('POINT_REFUNDED','DB_STOCK_RESTORED','REDIS_GATE_RESTORED')),
+    CONSTRAINT fk_compensation_step_checkout FOREIGN KEY (checkout_id) REFERENCES checkout (checkout_id)
+    );
+
 INSERT INTO product (product_id, name, price, image_url, check_in_at, check_out_at, sales_open_at)
 VALUES (1, '한정 패키지', 150000, 'https://example.com/p1.jpg',
         '2026-06-01 15:00:00', '2026-06-02 11:00:00', '2026-05-15 10:00:00')

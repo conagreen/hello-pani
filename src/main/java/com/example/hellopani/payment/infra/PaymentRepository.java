@@ -4,6 +4,7 @@ import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -84,6 +85,12 @@ public class PaymentRepository {
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
         }
+    }
+
+    public List<Payment> findAllByStatus(PaymentStatus status) {
+        return jdbcTemplate.query(
+                selectAll() + " WHERE status = ? ORDER BY payment_id",
+                ROW_MAPPER, status.name());
     }
 
     private static String selectAll() {

@@ -1,5 +1,7 @@
 package com.example.hellopani.checkout.infra;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -59,5 +61,19 @@ public class CheckoutRepository {
         return jdbcTemplate.update(
                 "UPDATE checkout SET status = ? WHERE checkout_id = ?",
                 CheckoutStatus.USED.name(), checkoutId);
+    }
+
+    public int markExpired(String checkoutId) {
+        return jdbcTemplate.update(
+                "UPDATE checkout SET status = ? WHERE checkout_id = ? AND status = ?",
+                CheckoutStatus.EXPIRED.name(), checkoutId, CheckoutStatus.ISSUED.name());
+    }
+
+    public List<Checkout> findIssuedExpiredBefore(LocalDateTime cutoff) {
+        return jdbcTemplate.query(
+                "SELECT checkout_id, user_id, product_id, quoted_price, available_point_snapshot, "
+                        + "status, expires_at, created_at FROM checkout "
+                        + "WHERE status = ? AND expires_at < ? ORDER BY expires_at",
+                ROW_MAPPER, CheckoutStatus.ISSUED.name(), cutoff);
     }
 }

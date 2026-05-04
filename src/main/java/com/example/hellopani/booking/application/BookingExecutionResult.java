@@ -31,6 +31,7 @@ public sealed interface BookingExecutionResult {
         INVALID_COMPOSITION,
         AMOUNT_MISMATCH,
         SOLD_OUT_OR_PROCESSING,
-        DUPLICATE_REQUEST_PROCESSING
+        DUPLICATE_REQUEST_PROCESSING,
+        REDIS_UNAVAILABLE
     }
 }
