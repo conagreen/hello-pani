@@ -95,4 +95,14 @@ spring:
 - 클라우드 배포 + k6 로컬 실행 (네트워크 지연 포함)
 - k6 Cloud / Grafana k6 OSS 분산 실행 (이번 범위 밖)
 
+### JVM warmup으로 인한 초기 latency 튐
+
+ramp-up 구간(처음 ~15초)의 p95/p99는 JVM JIT 컴파일과 클래스 로딩이 끝나기 전이라 평소보다 크게 튈 수 있다. 첫 부하 직전에 다음 중 하나를 하면 꼬리 분포가 안정된다.
+
+- 부하 시작 전 30초간 낮은 RPS로 핸드 워밍 (`PEAK_RPS=100 PEAK_DURATION=30s ./scripts/test-load.sh` 한 번 돌리고 본 시나리오)
+- `actuator/health`를 수십 회 미리 친 뒤 시작
+- ramp-up을 길게 (`PEAK_RAMP=60s`) 잡아 점진적으로 진입
+
+보고서의 latency p95/p99가 평소보다 높게 나오면 GC / JIT 영향을 의심하라. CONFIRMED 카운트는 영향받지 않는다.
+
 이 시스템의 본업이 "거절을 빠르게"이므로, 보고서의 핵심은 **CONFIRMED == 10** 한 줄이다. 나머지는 부수 정보다.
