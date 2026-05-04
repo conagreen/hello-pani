@@ -130,7 +130,9 @@ BASE_URL=http://localhost:9090 k6 run k6/consistency.js
 
 다음은 이 단계에서 구현하지 않는다. README나 시나리오에서 구현된 것처럼 약속하지 않는다.
 
-- Prometheus / Grafana 대시보드
+- PG 응답시간 메트릭: Fake PG 기반 최소 구현에서는 별도 계측하지 않는다.
+- 운영자용 잔여 재고 노출: 사용자 API 잔여 재고 미노출 원칙을 유지하기 위해 이번 범위에서는 제공하지 않는다. 필요하면 별도 운영자 조회나 내부 대시보드로 분리한다.
+- Prometheus remote-write / Grafana dashboard: 선택 확장이다. 기본 검증은 k6 stdout 요약과 Actuator/Micrometer 메트릭 노출로 충분하다.
 - 스파이크 / Redis 장애 자동 시나리오 (`k6/spike.js`, `k6/redis-failure.js`)
 - 분산 추적
 - 실시간 알림 채널

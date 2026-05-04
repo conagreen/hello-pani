@@ -733,7 +733,7 @@ dependencies {
 
 ### 결정 — 부하
 
-부하 도구: **k6** (코드형 시나리오, Prometheus remote-write 출력).
+부하 도구: **k6** (코드형 시나리오). 기본 검증은 k6 stdout 요약을 사용한다. Prometheus remote-write 출력은 선택 확장으로 둔다.
 
 검증 시나리오는 최소 정합성 / 멱등성 중심으로 제공하고, 스파이크 / Redis 장애 시나리오는 선택 확장으로 둔다.
 
@@ -748,9 +748,20 @@ dependencies {
 
 ### 결정 — 관측
 
-- **메트릭**: Spring Boot Actuator + Micrometer → Prometheus.
-   - 핵심 지표: TPS, HTTP p50/p99, Redis 응답시간/실패율, DB 재고 선점 성공률, 잔여 재고 (운영자 뷰), 503 응답률, PG 응답시간.
-- **시각화**: Grafana 대시보드는 옵션이다. 제공하는 경우 README에 import 방법을 명시한다.
+- **메트릭**: Spring Boot Actuator + Micrometer.
+    - 필수 노출 (이번 범위에서 구현):
+        - HTTP timing / status metrics (Actuator 기본)
+        - Redis gate 성공 / 실패
+        - DB 재고 선점 성공 / 실패
+        - Booking 성공 수
+        - 결제 실패 분류
+        - 503 응답
+        - compensation refund_failed
+        - Resilience4j circuit breaker metrics
+    - 확장 옵션 (이번 범위에서는 미노출):
+        - PG 응답시간 — Fake PG 기반 최소 구현이라 의미 있는 계측이 어렵다. 실제 PG 연동 시 추가한다.
+        - 운영자용 잔여 재고 — 사용자 API에는 절대 노출하지 않는다는 원칙과 분리하기 위해 운영자용 내부 지표나 별도 조회 경로로만 제공할 수 있다. 이번 범위에서는 제외한다.
+- **시각화**: Grafana 대시보드는 선택 확장이다. 기본 검증은 k6 stdout 요약과 Actuator/Micrometer 메트릭 노출로 충분하다. 제공하는 경우 README에 import 방법을 명시한다.
 - **로그**: 표준 stdout. Loki는 옵션(이 프로젝트 범위 외).
 - **트레이싱**: 이 프로젝트 범위 외. 결제 흐름 시퀀스는 코드 / 시퀀스 다이어그램으로 대체.
 
