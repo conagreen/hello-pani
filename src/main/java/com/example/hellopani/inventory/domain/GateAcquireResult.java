@@ -7,13 +7,13 @@ public sealed interface GateAcquireResult {
     }
 
     static GateAcquireResult rejected(GateRejectionReason reason, int retryAfterSeconds) {
-        return new Rejected(reason, retryAfterSeconds);
+        return new Rejected(reason, true, retryAfterSeconds);
     }
 
     record Acquired() implements GateAcquireResult {
         static final Acquired INSTANCE = new Acquired();
     }
 
-    record Rejected(GateRejectionReason reason, int retryAfterSeconds) implements GateAcquireResult {
+    record Rejected(GateRejectionReason reason, boolean retryable, int retryAfterSeconds) implements GateAcquireResult {
     }
 }

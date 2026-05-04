@@ -62,6 +62,7 @@ class RedisStockGateTest {
         assertThat(eleventh).isInstanceOf(GateAcquireResult.Rejected.class);
         GateAcquireResult.Rejected rejected = (GateAcquireResult.Rejected) eleventh;
         assertThat(rejected.reason()).isEqualTo(GateRejectionReason.SOLD_OUT_OR_PROCESSING);
+        assertThat(rejected.retryable()).isTrue();
         assertThat(rejected.retryAfterSeconds()).isPositive();
         assertThat(redisTemplate.opsForValue().get("stock:1")).isEqualTo("0");
     }
