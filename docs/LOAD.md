@@ -27,6 +27,18 @@ SCENARIO=spike  ./scripts/test-load.sh # 대기 → 풀림 → 폭주 2-phase
 - `browse`: GET 라인만 활성, POST는 0
 - `spike`: GET 라인이 먼저 살아있다가 일정 시점에 POST 라인이 폭발
 
+### MySQL 패널에서 보이는 부하 패턴 (DECISIONS 쟁점 3 참조)
+
+GET /checkout은 DB에 INSERT하지 않고 Redis cache에 매핑만 둔다. DB INSERT는 게이트 통과자(10명)만 booking 시점에 일괄로 수행되므로:
+
+| 시나리오 | MySQL INSERT rate | 의미 |
+|---|---|---|
+| `browse` (GET only, 300 RPS) | **0 INSERT/s** (idle) | 거절 경로가 진짜 0 DB hit. Redis cache.put만 발생 |
+| `rush` (1,000 RPS) | 짧은 spike (~40 INSERT 한 번에 발생, 그 후 0) | 게이트 통과한 10명만 booking 시점에 INSERT 4×10 = 40 row |
+| `spike` (browse → rush) | browse phase 0, rush phase에 짧은 spike | phase 전환이 INSERT 곡선으로 명시 |
+
+이 비대칭이 *"Redis는 게이트 + 임시 캡처, DB는 최종 진실"* 책임 분리의 시각적 증거다. 이전 모델(GET /checkout이 DB INSERT) 대비 거절 경로 DB 부하가 100% 제거됨.
+
 ## 통과 기준
 
 | 메트릭 | 규칙 |

@@ -7,6 +7,7 @@ import java.util.List;
 public record BookingHandleInput(
         String checkoutId,
         String userId,
+        long productId,
         List<ComponentInput> components
 ) {
 

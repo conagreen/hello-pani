@@ -87,6 +87,20 @@
 - DB 재고 선점 이후 실패는 Booking/Payment/보상 상태를 남기고 같은 결과를 재생한다.
 - `RESULT_PENDING`이 나중에 확정되면 결과 조회 잡이 idempotency 캐시를 최종 결과로 갱신한다.
 
+### Checkout 영속화 — Redis 임시 매핑 + booking 시점 DB INSERT
+
+GET /checkout이 *DB write를 동반하면* 거절될 운명의 트래픽이 모두 DB INSERT 한 줄을 만들고 떠나, "Redis 게이트로 부하를 막는다"는 약속이 GET 단계에서 무너진다. 이를 피하기 위해 Checkout은 두 단계로 나눠 영속화한다.
+
+1. **GET /checkout** — `checkout:{id} = userId` 매핑 하나만 Redis에 적재한다 (TTL 10분).
+    - 가격 / 포인트 잔액 / 만료 등은 Redis에 저장하지 않는다.
+    - 만료는 Redis TTL이 자동 처리 (cache miss = 만료된 것으로 본다).
+    - Redis 부담은 최소화 — 30만 GET이 와도 30만 × 36바이트 = 약 12MB.
+2. **POST /bookings, gate 통과 시점** — `BookingService.reserveInTransaction` 안에서 `INSERT INTO checkout`을 booking / payment INSERT와 같은 트랜잭션으로 수행한다.
+    - 가격(`quoted_price`)과 포인트 잔액(`available_point_snapshot`)은 product / point_account를 *POST 시점에 재조회*해 채운다. GET 시점 캡처가 강한 약속은 아니지만 한정 이벤트 도메인에서는 가격 변동이 거의 없어 실용적으로 충분하다.
+    - FK 정합성 유지 (`booking.checkout_id`, `payment.checkout_id`).
+
+결과 — 거절 경로의 DB hit은 0. booking 시점에야 비로소 checkout / booking / payment가 같이 INSERT된다. "거절을 빠르게"가 GET 단계까지 일관된다.
+
 ---
 
 ## 쟁점 4. 결제 확장성

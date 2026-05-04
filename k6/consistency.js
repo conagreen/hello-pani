@@ -42,6 +42,7 @@ export default function () {
 
   const body = JSON.stringify({
     checkoutId,
+    productId: parseInt(PRODUCT_ID),
     payments: [{ method: 'CARD', amount: PRICE }],
   });
   const res = http.post(`${BASE}/bookings`, body, { headers });

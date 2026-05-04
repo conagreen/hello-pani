@@ -15,9 +15,12 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import com.example.hellopani.checkout.infra.CheckoutCache;
 import com.example.hellopani.payment.infra.FakePgClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -46,6 +49,9 @@ class BookingControllerTest {
     @Autowired
     FakePgClient fakePgClient;
 
+    @Autowired
+    CheckoutCache checkoutCache;
+
     @BeforeEach
     void resetGlobalState() {
         redisTemplate.opsForValue().set("stock:1", "10");
@@ -71,19 +77,29 @@ class BookingControllerTest {
         jdbcTemplate.update("UPDATE stock SET qty = 10 WHERE product_id = 1");
     }
 
+    /**
+     * 새 모델: GET /checkout이 발급한 상태를 시뮬레이션. DB INSERT는 하지 않고 Redis cache에 매핑만 적재한다.
+     * (실제 BookingService.reserveInTransaction이 게이트 통과 시 checkout row를 INSERT한다.)
+     *
+     * <p>만료된 checkout을 시뮬레이션하려면 expiresAt을 과거로 두고 TTL을 0으로 줘서 Redis에서 즉시 만료시킨다.
+     */
+    /**
+     * 새 모델: GET /checkout이 발급한 상태를 시뮬레이션. DB INSERT는 하지 않고 Redis cache에 매핑만 적재한다.
+     * 만료된 checkout을 시뮬레이션하려면 expiresAt이 과거 — cache에 아예 적재하지 않아 GET 시 cache miss로 거절된다.
+     * quotedPrice 인자는 더 이상 cache에 저장되지 않으며, BookingService가 product 재조회로 검증한다.
+     */
     private String createCheckout(long quotedPrice, LocalDateTime expiresAt, String userId) {
         String checkoutId = "ck-bk-" + System.nanoTime() + "-" + COUNTER.incrementAndGet();
-        jdbcTemplate.update(
-                "INSERT INTO checkout "
-                        + "(checkout_id, user_id, product_id, quoted_price, available_point_snapshot, status, expires_at) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                checkoutId, userId, 1L, quotedPrice, 50000L, "ISSUED", expiresAt);
+        if (expiresAt.isAfter(LocalDateTime.now())) {
+            Duration ttl = Duration.between(LocalDateTime.now(), expiresAt);
+            checkoutCache.put(checkoutId, userId, ttl);
+        }
         return checkoutId;
     }
 
     private static String body(String checkoutId, String method, long amount) {
         return """
-                {"checkoutId":"%s","payments":[{"method":"%s","amount":%d}]}
+                {"checkoutId":"%s","productId":1,"payments":[{"method":"%s","amount":%d}]}
                 """.formatted(checkoutId, method, amount);
     }
 
@@ -229,13 +245,17 @@ class BookingControllerTest {
     @Test
     @DisplayName("[완료조건] 카드 결제 거절 — 200 + FAILED, DB stock과 Redis gate 복구, Payment COMPENSATED")
     void cardDeclined_compensatesStockAndGate_andMarksFailed() throws Exception {
-        long quotedPrice = FakePgClient.TRIGGER_CARD_DECLINED;
-        String checkoutId = createCheckout(quotedPrice, LocalDateTime.now().plusMinutes(10), "test-user-1");
+        // 새 모델: 가격은 product에서 재조회하므로 매직 amount(999998) 트릭이 안 통한다.
+        // 대신 FakePgClient.primeResult로 해당 checkoutId의 PG 응답을 명시적으로 Declined로 prime.
+        String checkoutId = createCheckout(150_000L, LocalDateTime.now().plusMinutes(10), "test-user-1");
+        fakePgClient.primeResult(checkoutId,
+                new com.example.hellopani.payment.domain.PgChargeResult.Declined(
+                        com.example.hellopani.payment.domain.FailureReason.CARD_DECLINED));
 
         mockMvc.perform(post("/bookings")
                         .header("X-User-Id", "test-user-1")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body(checkoutId, "CARD", quotedPrice)))
+                        .content(body(checkoutId, "CARD", 150_000L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.checkoutId").value(checkoutId));

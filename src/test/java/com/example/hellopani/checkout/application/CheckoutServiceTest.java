@@ -4,35 +4,27 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Set;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
-import org.springframework.boot.jdbc.test.autoconfigure.JdbcTest;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.TestPropertySource;
-import com.example.hellopani.catalog.infra.ProductRepository;
 import com.example.hellopani.checkout.domain.ProductNotFoundException;
-import com.example.hellopani.checkout.infra.CheckoutRepository;
-import com.example.hellopani.point.infra.PointRepository;
+import com.example.hellopani.checkout.infra.CheckoutCache;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@JdbcTest
-@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@SpringBootTest
 @TestPropertySource(properties = "spring.main.allow-bean-definition-overriding=true")
-@Import({
-        ProductRepository.class,
-        PointRepository.class,
-        CheckoutRepository.class,
-        CheckoutService.class,
-        CheckoutServiceTest.FixedClockConfig.class
-})
-@DisplayName("CheckoutService — 주문서 발급 흐름과 만료 시각 / 멱등 / 부재 사용자 처리")
+@Import(CheckoutServiceTest.FixedClockConfig.class)
+@DisplayName("CheckoutService — Redis cache 기반 주문서 발급 (DB INSERT 없음)")
 class CheckoutServiceTest {
 
     static final Instant FIXED_INSTANT = Instant.parse("2026-05-01T00:00:00Z");
@@ -50,7 +42,16 @@ class CheckoutServiceTest {
     CheckoutService checkoutService;
 
     @Autowired
-    JdbcTemplate jdbcTemplate;
+    CheckoutCache checkoutCache;
+
+    @Autowired
+    StringRedisTemplate redisTemplate;
+
+    @AfterEach
+    void cleanup() {
+        Set<String> keys = redisTemplate.keys("checkout:*");
+        if (keys != null && !keys.isEmpty()) redisTemplate.delete(keys);
+    }
 
     @Test
     @DisplayName("정상 주문서 발급 시 product / availablePoint / expiresAt(=now+10분) 모두 반환된다")
@@ -65,24 +66,14 @@ class CheckoutServiceTest {
     }
 
     @Test
-    @DisplayName("발급된 Checkout은 ISSUED 상태와 quoted_price, available_point_snapshot으로 영속화된다")
-    void persistsCheckoutWithIssuedStatusAndQuotedPrice() {
+    @DisplayName("발급된 checkoutId는 Redis cache에 userId 매핑으로 적재된다 (DB INSERT 없음)")
+    void persistsCheckoutToRedisCacheOnly() {
         CheckoutResult result = checkoutService.issue("test-user-1", 1L);
 
-        String status = jdbcTemplate.queryForObject(
-                "SELECT status FROM checkout WHERE checkout_id = ?",
-                String.class, result.checkoutId());
-        assertThat(status).isEqualTo("ISSUED");
-
-        Long quotedPrice = jdbcTemplate.queryForObject(
-                "SELECT quoted_price FROM checkout WHERE checkout_id = ?",
-                Long.class, result.checkoutId());
-        assertThat(quotedPrice).isEqualTo(150000L);
-
-        Long pointSnapshot = jdbcTemplate.queryForObject(
-                "SELECT available_point_snapshot FROM checkout WHERE checkout_id = ?",
-                Long.class, result.checkoutId());
-        assertThat(pointSnapshot).isEqualTo(50000L);
+        // Redis cache에 userId 매핑 적재 확인
+        assertThat(checkoutCache.findUserId(result.checkoutId())).contains("test-user-1");
+        // DB에는 INSERT되지 않았음 — booking transaction이 게이트 통과 시에만 INSERT
+        // (직접 DB 조회는 BookingControllerTest에서 검증)
     }
 
     @Test
@@ -98,10 +89,8 @@ class CheckoutServiceTest {
         CheckoutResult result = checkoutService.issue("brand-new-user", 1L);
 
         assertThat(result.availablePoint()).isZero();
-        Long pointSnapshot = jdbcTemplate.queryForObject(
-                "SELECT available_point_snapshot FROM checkout WHERE checkout_id = ?",
-                Long.class, result.checkoutId());
-        assertThat(pointSnapshot).isZero();
+        // Redis cache에는 userId만 매핑되며 잔액 정보는 저장하지 않는다 (POST 시점에 재조회).
+        assertThat(checkoutCache.findUserId(result.checkoutId())).contains("brand-new-user");
     }
 
     @Test
@@ -114,18 +103,14 @@ class CheckoutServiceTest {
     }
 
     @Test
-    @DisplayName("발급된 Checkout 행에 user_id, product_id가 그대로 영속화된다")
-    void persistsSubmittedUserIdAndProductId() {
-        CheckoutResult result = checkoutService.issue("brand-new-user", 1L);
+    @DisplayName("Redis cache TTL은 expiresAt까지(약 10분)로 설정된다")
+    void cacheTtlMatchesExpiry() {
+        CheckoutResult result = checkoutService.issue("test-user-1", 1L);
 
-        String userId = jdbcTemplate.queryForObject(
-                "SELECT user_id FROM checkout WHERE checkout_id = ?",
-                String.class, result.checkoutId());
-        assertThat(userId).isEqualTo("brand-new-user");
-
-        Long productId = jdbcTemplate.queryForObject(
-                "SELECT product_id FROM checkout WHERE checkout_id = ?",
-                Long.class, result.checkoutId());
-        assertThat(productId).isEqualTo(1L);
+        Long ttlSeconds = redisTemplate.getExpire("checkout:" + result.checkoutId());
+        assertThat(ttlSeconds).isNotNull();
+        assertThat(ttlSeconds).isPositive();
+        // Duration.ofMinutes(10) = 600 seconds. -1초 / +1초 정도 오차 허용.
+        assertThat(ttlSeconds).isBetween(595L, 605L);
     }
 }

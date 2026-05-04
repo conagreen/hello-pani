@@ -21,6 +21,11 @@ public class FakePgClient implements PgClient {
 
     @Override
     public PgChargeResult charge(PgChargeRequest request) {
+        // primeResult로 미리 시드된 결과가 있으면 우선 사용한다 (테스트 시뮬용 + idempotent retry).
+        PgChargeResult primed = resultsByKey.get(request.pgIdempotencyKey());
+        if (primed != null) {
+            return primed;
+        }
         PgChargeResult result = resolve(request);
         resultsByKey.put(request.pgIdempotencyKey(), result);
         return result;

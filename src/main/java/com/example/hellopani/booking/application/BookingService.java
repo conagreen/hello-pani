@@ -1,11 +1,16 @@
 package com.example.hellopani.booking.application;
 
+import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import com.example.hellopani.booking.infra.BookingRepository;
+import com.example.hellopani.catalog.domain.Product;
+import com.example.hellopani.catalog.infra.ProductRepository;
+import com.example.hellopani.checkout.application.CheckoutService;
 import com.example.hellopani.checkout.domain.Checkout;
 import com.example.hellopani.checkout.domain.CheckoutStatus;
+import com.example.hellopani.checkout.infra.CheckoutCache;
 import com.example.hellopani.checkout.infra.CheckoutRepository;
 import com.example.hellopani.compensation.application.CompensationContext;
 import com.example.hellopani.compensation.application.CompensationService;
@@ -26,6 +31,8 @@ import com.example.hellopani.payment.domain.PaymentMethodType;
 import com.example.hellopani.payment.domain.PaymentValidator;
 import com.example.hellopani.payment.infra.PaymentComponentRepository;
 import com.example.hellopani.payment.infra.PaymentRepository;
+import com.example.hellopani.point.domain.PointAccount;
+import com.example.hellopani.point.infra.PointRepository;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Clock;
@@ -39,7 +46,10 @@ import java.util.Map;
 public class BookingService {
 
     private final IdempotencyService idempotencyService;
+    private final CheckoutCache checkoutCache;
     private final CheckoutRepository checkoutRepository;
+    private final ProductRepository productRepository;
+    private final PointRepository pointRepository;
     private final StockGate stockGate;
     private final StockRepository stockRepository;
     private final BookingRepository bookingRepository;
@@ -55,7 +65,10 @@ public class BookingService {
     private final AppMetrics appMetrics;
 
     public BookingService(IdempotencyService idempotencyService,
+                          CheckoutCache checkoutCache,
                           CheckoutRepository checkoutRepository,
+                          ProductRepository productRepository,
+                          PointRepository pointRepository,
                           StockGate stockGate,
                           StockRepository stockRepository,
                           BookingRepository bookingRepository,
@@ -70,7 +83,10 @@ public class BookingService {
                           Clock clock,
                           AppMetrics appMetrics) {
         this.idempotencyService = idempotencyService;
+        this.checkoutCache = checkoutCache;
         this.checkoutRepository = checkoutRepository;
+        this.productRepository = productRepository;
+        this.pointRepository = pointRepository;
         this.stockGate = stockGate;
         this.stockRepository = stockRepository;
         this.bookingRepository = bookingRepository;
@@ -181,30 +197,47 @@ public class BookingService {
     }
 
     private Checkout loadAndValidateCheckout(BookingHandleInput input) {
-        Checkout checkout = checkoutRepository.findById(input.checkoutId())
+        // 1. Redis cache에서 userId 조회. 없으면 만료(TTL) 또는 미발급. 둘 다 사용자에겐 같은 의미.
+        String cachedUserId = checkoutCache.findUserId(input.checkoutId())
                 .orElseThrow(() -> new PreReserveValidationFailure(new BookingExecutionResult.Rejected(
                         input.checkoutId(),
-                        BookingExecutionResult.RejectionCode.CHECKOUT_NOT_FOUND,
-                        false, 0, "Checkout not found")));
-        if (!checkout.userId().equals(input.userId())) {
+                        BookingExecutionResult.RejectionCode.CHECKOUT_EXPIRED,
+                        false, 0, "Checkout not found or expired")));
+
+        // 2. 사용자 도용 차단 — Redis 매핑된 userId와 X-User-Id 일치해야 한다.
+        if (!cachedUserId.equals(input.userId())) {
             throw new PreReserveValidationFailure(new BookingExecutionResult.Rejected(
                     input.checkoutId(),
                     BookingExecutionResult.RejectionCode.CHECKOUT_USER_MISMATCH,
                     false, 0, "Checkout owner mismatch"));
         }
-        if (checkout.status() != CheckoutStatus.ISSUED) {
+
+        // 3. 이미 USED된 checkoutId는 booking row의 UNIQUE 제약 / idempotency가 차단한다.
+        //    DB row가 존재하면 (= 이미 booking 시점에 INSERT됨) 그것 자체가 USED 신호.
+        Optional<Checkout> persisted = checkoutRepository.findById(input.checkoutId());
+        if (persisted.isPresent() && persisted.get().status() != CheckoutStatus.ISSUED) {
             throw new PreReserveValidationFailure(new BookingExecutionResult.Rejected(
                     input.checkoutId(),
                     BookingExecutionResult.RejectionCode.CHECKOUT_ALREADY_CONSUMED,
                     false, 0, "Checkout already consumed"));
         }
-        if (LocalDateTime.now(clock).isAfter(checkout.expiresAt())) {
-            throw new PreReserveValidationFailure(new BookingExecutionResult.Rejected(
-                    input.checkoutId(),
-                    BookingExecutionResult.RejectionCode.CHECKOUT_EXPIRED,
-                    false, 0, "Checkout expired"));
-        }
-        return checkout;
+
+        // 4. 가격 / 포인트는 POST 시점에 product / point_account를 재조회해 캡처한다.
+        //    GET 시점 캡처가 아니므로 가격이 GET~POST 사이 변동되면 새 가격 기준으로 검증된다.
+        Product product = productRepository.findById(input.productId())
+                .orElseThrow(() -> new PreReserveValidationFailure(new BookingExecutionResult.Rejected(
+                        input.checkoutId(),
+                        BookingExecutionResult.RejectionCode.CHECKOUT_NOT_FOUND,
+                        false, 0, "Product not found")));
+        long availablePoint = pointRepository.findByUserId(input.userId())
+                .map(PointAccount::balance).orElse(0L);
+
+        LocalDateTime now = LocalDateTime.now(clock);
+        // ISSUED 상태로 in-memory snapshot. reserveInTransaction에서 DB INSERT 시 그대로 사용.
+        return new Checkout(
+                input.checkoutId(), input.userId(), product.productId(),
+                product.price(), availablePoint, CheckoutStatus.ISSUED,
+                now.plus(CheckoutService.EXPIRY_DURATION), now);
     }
 
     private List<ChargeRequest> toChargeRequests(BookingHandleInput input, long totalAmount) {
@@ -236,6 +269,9 @@ public class BookingService {
             if (decremented == 0) {
                 throw new StockReserveFailedException(checkout.productId());
             }
+            // checkout row를 DB에 영속화 — 게이트 통과자만 도달하므로 이 시점에야 INSERT한다.
+            // FK 정합성: booking / payment_component가 checkout을 FK로 참조한다.
+            checkoutRepository.insert(checkout);
             long bookingId = bookingRepository.insertPending(
                     input.checkoutId(), input.userId(), checkout.productId(), checkout.quotedPrice());
             long paymentId = paymentRepository.insertProcessing(

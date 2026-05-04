@@ -6,6 +6,7 @@ import java.util.List;
 
 public record BookingRequest(
         String checkoutId,
+        long productId,
         List<PaymentInput> payments
 ) {
 

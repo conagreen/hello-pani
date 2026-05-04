@@ -40,7 +40,7 @@ public class BookingController {
         for (BookingRequest.PaymentInput p : request.payments()) {
             components.add(new BookingHandleInput.ComponentInput(p.method(), p.amount()));
         }
-        return new BookingHandleInput(request.checkoutId(), userId, components);
+        return new BookingHandleInput(request.checkoutId(), userId, request.productId(), components);
     }
 
     private ResponseEntity<?> toResponse(BookingExecutionResult result) {

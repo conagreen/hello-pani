@@ -15,6 +15,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import com.example.hellopani.checkout.infra.CheckoutCache;
 import com.example.hellopani.inventory.domain.RedisUnavailableException;
 import com.example.hellopani.inventory.domain.StockGate;
 
@@ -46,6 +47,9 @@ class RedisFailFastTest {
     @MockitoBean
     StockGate stockGate;
 
+    @Autowired
+    CheckoutCache checkoutCache;
+
     @BeforeEach
     void resetState() {
         jdbcTemplate.update("UPDATE stock SET qty = 10 WHERE product_id = 1");
@@ -69,18 +73,15 @@ class RedisFailFastTest {
     @DisplayName("[완료조건] StockGate.tryAcquire에서 RedisUnavailableException → 503 + DB stock 미변경 (DB 우회 없음)")
     void redisUnavailable_returns503_andDoesNotBypassToDb() throws Exception {
         String checkoutId = "ck-redfail-" + System.nanoTime() + "-" + COUNTER.incrementAndGet();
-        jdbcTemplate.update(
-                "INSERT INTO checkout "
-                        + "(checkout_id, user_id, product_id, quoted_price, available_point_snapshot, status, expires_at) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                checkoutId, "test-user-1", 1L, 150000L, 50000L, "ISSUED",
-                LocalDateTime.now().plusMinutes(10));
+        // 새 모델: GET /checkout이 Redis cache에 SET. DB INSERT는 booking 시점.
+        // 이 테스트는 stockGate에서 Redis 장애를 시뮬레이션하므로 cache는 정상 작동 가정 (cache.put은 normal Redis call).
+        checkoutCache.put(checkoutId, "test-user-1", java.time.Duration.ofMinutes(10));
 
         when(stockGate.tryAcquire(anyLong(), anyString(), anyString()))
                 .thenThrow(new RedisUnavailableException("simulated outage", null));
 
         String body = """
-                {"checkoutId":"%s","payments":[{"method":"CARD","amount":150000}]}
+                {"checkoutId":"%s","productId":1,"payments":[{"method":"CARD","amount":150000}]}
                 """.formatted(checkoutId);
 
         mockMvc.perform(post("/bookings")

@@ -68,6 +68,13 @@
 - POST Booking은 checkoutId 기준으로 멱등이다.
 - 만료된 Checkout은 결제에 사용할 수 없다.
 
+영속화 정책 (DECISIONS 쟁점 3 참조):
+
+- GET /checkout 시점에는 Redis `checkout:{id} = userId` 매핑만 적재한다 (TTL 10분). DB write 없음.
+- DB INSERT는 `BookingService.reserveInTransaction`에서 게이트 통과자에 한해 수행한다 (booking / payment와 같은 트랜잭션).
+- `quotedPrice`, `availablePointSnapshot`은 GET이 아닌 POST 시점에 product / point_account 재조회로 채운다.
+- 만료는 Redis TTL이 자동 처리 — POST 시점에 cache miss면 만료/위조로 본다.
+
 ### Stock
 
 - `productId`

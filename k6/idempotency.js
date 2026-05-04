@@ -46,6 +46,7 @@ export default function (data) {
   const headers = { 'X-User-Id': USER_ID, 'Content-Type': 'application/json' };
   const body = JSON.stringify({
     checkoutId: data.checkoutId,
+    productId: parseInt(PRODUCT_ID),
     payments: [{ method: 'CARD', amount: PRICE }],
   });
   const res = http.post(`${BASE}/bookings`, body, { headers });
