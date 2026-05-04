@@ -37,17 +37,17 @@
 
 ## 추천 작업 순서
 
-| 단위 | 제목 | 핵심 목표 |
-|---|---|---|
-| 1 | Project Bootstrap and Runtime | 코드 수정 없이 실행 가능한 기본 골격 생성 |
-| 2 | Schema and Seed Data | 도메인 모델을 DB 스키마와 seed 데이터로 구현 |
-| 3 | Checkout API | 주문서 발급과 포인트 조회 구현 |
-| 4 | Inventory Gate | Redis 게이트와 DB 재고 선점 구현 |
-| 5 | Payment Domain | 복합 결제, 실패 분류, 보상 도메인 구현 |
-| 6 | Booking Orchestration | POST Booking 전체 유스케이스 연결 |
-| 7 | Failure Recovery and Resilience | 결과 불명, Redis 장애, 정리 잡 처리 |
-| 8 | Observability and Load Verification | 정합성, 멱등성, 장애 정책 검증 |
-| 9 | Documentation and Final Verification | 실행, 설계, 검증 방법 문서화 |
+| 단위 | 제목                                   | 핵심 목표                        |
+|----|--------------------------------------|------------------------------|
+| 1  | Project Bootstrap and Runtime        | 코드 수정 없이 실행 가능한 기본 골격 생성     |
+| 2  | Schema and Seed Data                 | 도메인 모델을 DB 스키마와 seed 데이터로 구현 |
+| 3  | Checkout API                         | 주문서 발급과 포인트 조회 구현            |
+| 4  | Inventory Gate                       | Redis 게이트와 DB 재고 선점 구현       |
+| 5  | Payment Domain                       | 복합 결제, 실패 분류, 보상 도메인 구현      |
+| 6  | Booking Orchestration                | POST Booking 전체 유스케이스 연결     |
+| 7  | Failure Recovery and Resilience      | 결과 불명, Redis 장애, 정리 잡 처리     |
+| 8  | Observability and Load Verification  | 정합성, 멱등성, 장애 정책 검증           |
+| 9  | Documentation and Final Verification | 실행, 설계, 검증 방법 문서화            |
 
 ## Task 1. Project Bootstrap and Runtime
 
@@ -131,7 +131,7 @@
 - `docs/DOMAIN.md` Product
 - `docs/DOMAIN.md` Checkout
 - `docs/DOMAIN.md` GET Checkout
-- `docs/DECISIONS.md` 0.9 #3, #8, #10
+- `docs/DECISIONS.md` 쟁점 3
 
 작업:
 
@@ -334,7 +334,7 @@
 입력 문서:
 
 - `docs/DECISIONS.md` 쟁점 9
-- `docs/DECISIONS.md` 0.2 트래픽 / 부하 프로파일
+- `docs/DOMAIN.md` 검증과 관측
 
 작업:
 
@@ -407,18 +407,18 @@
 
 ## 요구사항 추적성
 
-| 관심사 | 관련 작업 |
-|---|---|
-| 실행 가능성 | Task 1, Task 9 |
-| ERD / DDL | Task 2, Task 9 |
-| GET Checkout | Task 3 |
-| 재고 정합성 | Task 4, Task 6, Task 8 |
-| 선착순 공정성 | Task 4, Task 8 |
-| 멱등성 | Task 5, Task 6, Task 8 |
-| 복합 결제 확장성 | Task 5 |
-| 결제 실패 보상 | Task 5, Task 6, Task 7 |
-| Redis 장애 대응 | Task 7, Task 8 |
-| 부하 검증 | Task 8 |
+| 관심사          | 관련 작업                  |
+|--------------|------------------------|
+| 실행 가능성       | Task 1, Task 9         |
+| ERD / DDL    | Task 2, Task 9         |
+| GET Checkout | Task 3                 |
+| 재고 정합성       | Task 4, Task 6, Task 8 |
+| 선착순 공정성      | Task 4, Task 8         |
+| 멱등성          | Task 5, Task 6, Task 8 |
+| 복합 결제 확장성    | Task 5                 |
+| 결제 실패 보상     | Task 5, Task 6, Task 7 |
+| Redis 장애 대응  | Task 7, Task 8         |
+| 부하 검증        | Task 8                 |
 
 ## 하지 않을 작업
 

@@ -5,12 +5,11 @@
 - 한정 재고 10개를 두고 분당 30,000 ~ 60,000건 규모의 트래픽이 쏠리는 상황을 가정한다.
 - 핵심은 **거절을 빠르고 공정하게 수행하는 시스템**이다. 정상 운영 상태에서 정확히 10건만 성공하고 어떤 경우에도 초과 판매를 만들지 않는다.
 
-설계 결정과 도메인 모델 전문은 다음을 본다.
+더 자세히 보고 싶으면 다음 문서를 본다.
 
 - [docs/DECISIONS.md](docs/DECISIONS.md) — 왜 그렇게 선택했는가
 - [docs/DOMAIN.md](docs/DOMAIN.md) — 무엇을 만들었는가
-- [docs/TASKS.md](docs/TASKS.md) — 어떤 순서로 구현했는가
-- [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — 메트릭과 k6 시나리오 상세
+- [docs/TASKS.md](docs/TASKS.md) — 구현 순서와 완료 체크리스트
 
 ## 사전 준비
 
@@ -355,15 +354,16 @@ CREATE TABLE IF NOT EXISTS compensation_step (
 
 ### k6 부하 시나리오
 
-상세는 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md). 요약:
+아래 스크립트는 앱이 이미 떠 있으면 그대로 사용하고, 떠 있지 않으면 `./gradlew bootRun`을 백그라운드로 띄운 뒤 검증한다.
 
 ```bash
-# 실행 전 인프라 + 앱 기동 후
-./k6/reset.sh                  # DB / Redis 초기화 + stock=10 재시드
-k6 run k6/consistency.js       # 50 VU 동시 진입 → 정확히 10건 CONFIRMED
-./k6/reset.sh
-k6 run k6/idempotency.js       # 같은 checkoutId 20 VU → 1건만 CONFIRMED
+./scripts/test-consistency.sh  # 50 VU 동시 진입 → 정확히 10건 CONFIRMED
+./scripts/test-idempotency.sh  # 같은 checkoutId 20 VU → Booking/Payment 1건
+./scripts/test-load.sh         # 피크 부하 (1,000 RPS / 60s, build/load-report.md 생성)
+./scripts/test-all.sh          # ./gradlew test --rerun-tasks + k6 2종
 ```
+
+피크 부하 시나리오와 보고서는 [docs/LOAD.md](docs/LOAD.md)에 한 페이지로 정리되어 있다.
 
 통과 기준 (k6 thresholds 자동 검증):
 
@@ -383,6 +383,13 @@ docker compose exec -T mysql mysql -u hellopani -phellopani hellopani -e "
 # 기대: bookings=1, payments=1, qty=9
 ```
 
+각 스크립트는 실행 전에 `./k6/reset.sh`로 DB / Redis 상태를 초기화한다.
+이미 초기화한 상태를 유지하고 싶으면 `SKIP_RESET=true`를 붙인다.
+
+```bash
+SKIP_RESET=true ./scripts/test-consistency.sh
+```
+
 ### 메트릭 확인
 
 ```bash
@@ -390,7 +397,7 @@ curl -s http://localhost:8080/actuator/metrics/booking.confirmed
 curl -s http://localhost:8080/actuator/metrics/redis.gate.failure?tag=reason:SOLD_OUT_OR_PROCESSING
 ```
 
-전체 메트릭 목록은 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md#메트릭) 참고.
+커스텀 메트릭 목록은 [docs/DOMAIN.md](docs/DOMAIN.md#검증과-관측)에 요약되어 있다.
 
 ## 하지 않은 것
 
