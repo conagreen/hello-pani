@@ -1,7 +1,8 @@
 package com.example.hellopani.booking.api;
 
-import java.util.List;
 import com.example.hellopani.payment.domain.PaymentMethodType;
+
+import java.util.List;
 
 public record BookingRequest(
         String checkoutId,

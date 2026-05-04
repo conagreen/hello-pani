@@ -1,7 +1,5 @@
 package com.example.hellopani.catalog.infra;
 
-import java.util.Optional;
-
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.DataClassRowMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -9,6 +7,7 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 import com.example.hellopani.catalog.domain.Product;
 
+import java.util.Optional;
 
 @Repository
 public class ProductRepository {

@@ -1,7 +1,5 @@
 package com.example.hellopani.booking.api;
 
-import java.util.ArrayList;
-import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,6 +11,9 @@ import com.example.hellopani.booking.application.BookingHandleInput;
 import com.example.hellopani.booking.application.BookingResultPayload;
 import com.example.hellopani.booking.application.BookingService;
 import tools.jackson.databind.ObjectMapper;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @RestController
 public class BookingController {
@@ -73,8 +74,7 @@ public class BookingController {
             case CHECKOUT_NOT_FOUND -> HttpStatus.NOT_FOUND;
             case CHECKOUT_USER_MISMATCH -> HttpStatus.FORBIDDEN;
             case CHECKOUT_EXPIRED, INVALID_COMPOSITION, AMOUNT_MISMATCH -> HttpStatus.BAD_REQUEST;
-            case CHECKOUT_ALREADY_CONSUMED, SOLD_OUT_OR_PROCESSING, DUPLICATE_REQUEST_PROCESSING ->
-                    HttpStatus.CONFLICT;
+            case CHECKOUT_ALREADY_CONSUMED, SOLD_OUT_OR_PROCESSING, DUPLICATE_REQUEST_PROCESSING -> HttpStatus.CONFLICT;
             case REDIS_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
         };
     }

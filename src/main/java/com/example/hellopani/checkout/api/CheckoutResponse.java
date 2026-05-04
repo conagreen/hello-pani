@@ -1,8 +1,9 @@
 package com.example.hellopani.checkout.api;
 
-import java.time.LocalDateTime;
 import com.example.hellopani.catalog.domain.Product;
 import com.example.hellopani.checkout.application.CheckoutResult;
+
+import java.time.LocalDateTime;
 
 public record CheckoutResponse(
         String checkoutId,

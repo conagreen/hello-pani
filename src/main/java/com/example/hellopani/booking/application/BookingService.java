@@ -1,21 +1,10 @@
 package com.example.hellopani.booking.application;
 
-import java.time.Clock;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.EnumMap;
-import java.util.List;
-import java.util.Map;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import com.example.hellopani.booking.domain.Booking;
 import com.example.hellopani.booking.infra.BookingRepository;
 import com.example.hellopani.checkout.domain.Checkout;
-import com.example.hellopani.checkout.domain.CheckoutAlreadyConsumedException;
-import com.example.hellopani.checkout.domain.CheckoutExpiredException;
-import com.example.hellopani.checkout.domain.CheckoutNotFoundException;
-import com.example.hellopani.checkout.domain.CheckoutOwnershipMismatchException;
 import com.example.hellopani.checkout.domain.CheckoutStatus;
 import com.example.hellopani.checkout.infra.CheckoutRepository;
 import com.example.hellopani.compensation.application.CompensationContext;
@@ -38,6 +27,13 @@ import com.example.hellopani.payment.domain.PaymentValidator;
 import com.example.hellopani.payment.infra.PaymentComponentRepository;
 import com.example.hellopani.payment.infra.PaymentRepository;
 import tools.jackson.databind.ObjectMapper;
+
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class BookingService {
@@ -319,27 +315,6 @@ public class BookingService {
                                             boolean retryable,
                                             String message) {
         return new BookingExecutionResult.Rejected(checkoutId, code, retryable, 0, message);
-    }
-
-    public Booking findBooking(long bookingId) {
-        return bookingRepository.findById(bookingId).orElseThrow();
-    }
-
-    public Checkout findCheckout(String checkoutId) {
-        return checkoutRepository.findById(checkoutId)
-                .orElseThrow(() -> new CheckoutNotFoundException(checkoutId));
-    }
-
-    void throwIfMisuse(String checkoutId, String userId, Checkout checkout) {
-        if (!checkout.userId().equals(userId)) {
-            throw new CheckoutOwnershipMismatchException(checkoutId);
-        }
-        if (checkout.status() != CheckoutStatus.ISSUED) {
-            throw new CheckoutAlreadyConsumedException(checkoutId);
-        }
-        if (LocalDateTime.now(clock).isAfter(checkout.expiresAt())) {
-            throw new CheckoutExpiredException(checkoutId);
-        }
     }
 
     private record ReservationOutput(long bookingId, long paymentId, Map<PaymentMethodType, Long> componentIds) {
