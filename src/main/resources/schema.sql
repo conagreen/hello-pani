@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS stock (
     qty        INT         NOT NULL,
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (product_id),
-    CONSTRAINT chk_stock_qty CHECK (qty >= 0)
+    CONSTRAINT chk_stock_qty CHECK (qty >= 0),
+    CONSTRAINT fk_stock_product FOREIGN KEY (product_id) REFERENCES product (product_id)
 );
 
 CREATE TABLE IF NOT EXISTS checkout (
@@ -27,7 +28,8 @@ CREATE TABLE IF NOT EXISTS checkout (
     expires_at               DATETIME(6) NOT NULL,
     created_at               DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (checkout_id),
-    CONSTRAINT chk_checkout_status CHECK (status IN ('ISSUED','USED','EXPIRED'))
+    CONSTRAINT chk_checkout_status CHECK (status IN ('ISSUED','USED','EXPIRED')),
+    CONSTRAINT fk_checkout_product FOREIGN KEY (product_id) REFERENCES product (product_id)
 );
 
 CREATE TABLE IF NOT EXISTS booking (
@@ -41,7 +43,9 @@ CREATE TABLE IF NOT EXISTS booking (
     confirmed_at DATETIME(6) NULL,
     PRIMARY KEY (booking_id),
     CONSTRAINT uk_booking_checkout UNIQUE (checkout_id),
-    CONSTRAINT chk_booking_status CHECK (status IN ('PENDING_PAYMENT','CONFIRMED','FAILED'))
+    CONSTRAINT chk_booking_status CHECK (status IN ('PENDING_PAYMENT','CONFIRMED','FAILED')),
+    CONSTRAINT fk_booking_checkout FOREIGN KEY (checkout_id) REFERENCES checkout (checkout_id),
+    CONSTRAINT fk_booking_product  FOREIGN KEY (product_id)  REFERENCES product (product_id)
 );
 
 CREATE TABLE IF NOT EXISTS payment (
@@ -56,7 +60,9 @@ CREATE TABLE IF NOT EXISTS payment (
     completed_at        DATETIME(6) NULL,
     PRIMARY KEY (payment_id),
     CONSTRAINT uk_payment_checkout UNIQUE (checkout_id),
-    CONSTRAINT chk_payment_status CHECK (status IN ('PROCESSING','RESULT_PENDING','SUCCEEDED','FAILED','COMPENSATING','COMPENSATED','REFUND_FAILED'))
+    CONSTRAINT chk_payment_status CHECK (status IN ('PROCESSING','RESULT_PENDING','SUCCEEDED','FAILED','COMPENSATING','COMPENSATED','REFUND_FAILED')),
+    CONSTRAINT fk_payment_checkout FOREIGN KEY (checkout_id) REFERENCES checkout (checkout_id),
+    CONSTRAINT fk_payment_booking  FOREIGN KEY (booking_id)  REFERENCES booking (booking_id)
 );
 
 CREATE TABLE IF NOT EXISTS payment_component (
@@ -67,7 +73,8 @@ CREATE TABLE IF NOT EXISTS payment_component (
     status                  VARCHAR(16)  NOT NULL,
     external_transaction_id VARCHAR(128) NULL,
     PRIMARY KEY (payment_component_id),
-    CONSTRAINT chk_payment_component_method CHECK (method IN ('CARD','Y_PAY','POINT'))
+    CONSTRAINT chk_payment_component_method CHECK (method IN ('CARD','Y_PAY','POINT')),
+    CONSTRAINT fk_payment_component_payment FOREIGN KEY (payment_id) REFERENCES payment (payment_id)
 );
 
 CREATE TABLE IF NOT EXISTS point_account (
@@ -87,7 +94,9 @@ CREATE TABLE IF NOT EXISTS point_ledger (
     created_at      DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (point_ledger_id),
     CONSTRAINT uk_point_ledger_idem UNIQUE (checkout_id, reason),
-    CONSTRAINT chk_point_ledger_reason CHECK (reason IN ('BOOKING_USE','BOOKING_REFUND','BOOKING_RESTORE'))
+    CONSTRAINT chk_point_ledger_reason CHECK (reason IN ('BOOKING_USE','BOOKING_REFUND','BOOKING_RESTORE')),
+    CONSTRAINT fk_point_ledger_user     FOREIGN KEY (user_id)     REFERENCES point_account (user_id),
+    CONSTRAINT fk_point_ledger_checkout FOREIGN KEY (checkout_id) REFERENCES checkout (checkout_id)
 );
 
 INSERT INTO product (product_id, name, price, image_url, check_in_at, check_out_at, sales_open_at)
