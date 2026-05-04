@@ -1,6 +1,10 @@
 services:
   mysql:
     image: mysql:8.4
+    # MySQL 기본 max_connections=151인데 review.sh의 app x2 (Hikari 10 each) +
+    # ./gradlew test의 컨텍스트별 Hikari 풀 + observability exporter가 동시에 붙으면
+    # 가끔 초과한다. 데모/테스트 동시 사용 여유를 위해 500으로 키움.
+    command: [ "mysqld", "--max-connections=500" ]
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: hellopani

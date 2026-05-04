@@ -1,6 +1,10 @@
 spring:
   application:
     name: hello-pani
+  # 테스트 클래스패스에 application-test.yml이 있으면 자동 import (운영 jar에는 없으니 무시).
+  # IntelliJ JUnit runner와 ./gradlew test 모두에서 profile 활성화 없이 적용된다.
+  config:
+    import: optional:classpath:application-test.yml
   datasource:
     url: jdbc:mysql://localhost:3306/hellopani
     username: hellopani
