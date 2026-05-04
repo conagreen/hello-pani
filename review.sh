@@ -196,6 +196,42 @@ fetch_post_count() {
     echo "$body" | sed -nE 's/.*"statistic":"COUNT","value":([0-9]+).*/\1/p' | head -1
 }
 
+# 모든 app 인스턴스의 FakePgClient에 prime 결과를 broadcast.
+# nginx round-robin 때문에 한 곳에만 prime하면 booking이 다른 app으로 가서 prime이 무시됨.
+# 한 번의 docker-run 안에서 양쪽 컨테이너 호출.
+prime_pg_all_apps() {
+    local cid="$1"
+    local result="$2"
+    docker run --rm --network hello-pani_default \
+        -e "CID=$cid" -e "RESULT=$result" \
+        curlimages/curl:8.10.1 sh -lc '
+            BODY="{\"checkoutId\":\"$CID\",\"result\":\"$RESULT\"}"
+            for app in hello-pani-app-1 hello-pani-app-2; do
+                curl -fsS -X POST -H "Content-Type: application/json" \
+                     -d "$BODY" "http://$app:8080/test/pg/prime" >/dev/null 2>&1 || true
+            done
+        ' >/dev/null 2>&1 || true
+}
+
+# 모든 app 인스턴스에서 PaymentResolutionJob 동기 트리거.
+resolve_pending_all_apps() {
+    docker run --rm --network hello-pani_default \
+        curlimages/curl:8.10.1 sh -lc '
+            for app in hello-pani-app-1 hello-pani-app-2; do
+                curl -fsS -X POST "http://$app:8080/test/pg/resolve-pending" >/dev/null 2>&1 || true
+            done
+        ' >/dev/null 2>&1 || true
+}
+
+reset_pg_all_apps() {
+    docker run --rm --network hello-pani_default \
+        curlimages/curl:8.10.1 sh -lc '
+            for app in hello-pani-app-1 hello-pani-app-2; do
+                curl -fsS -X POST "http://$app:8080/test/pg/reset" >/dev/null 2>&1 || true
+            done
+        ' >/dev/null 2>&1 || true
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 검증 시나리오 — 개별 실행
 # ─────────────────────────────────────────────────────────────────────────────
@@ -495,6 +531,169 @@ run_partial_redis_down() {
     fi
 }
 
+run_payment_failure() {
+    stage "결제 실패 → 보상 — DECLINED 시뮬, compensation_step 3단계 모두 기록"
+    reset_state
+    reset_pg_all_apps
+
+    local fails=()
+    local user="test-user-1"  # 시드에서 50,000 포인트 보유
+
+    # 1. checkoutId 발급
+    note "1. GET /checkout (user=$user, 시드 포인트 50,000)"
+    local cid
+    cid=$(curl -fsS "$NGINX_URL/checkout?productId=1" -H "X-User-Id: $user" 2>/dev/null \
+        | grep -oE '"checkoutId":"[^"]+"' | cut -d'"' -f4 || echo "")
+    if [[ -z "$cid" ]]; then
+        fail "GET 실패"
+        record "payment-failure" "FAIL" "GET broken"
+        return 1
+    fi
+    ok "checkoutId=${cid:0:8}…"
+
+    # 2. PG 결과를 DECLINED로 prime — *양 app 모두에* (FakePgClient는 인스턴스 로컬)
+    note "2. /test/pg/prime DECLINED — app-1, app-2 둘 다"
+    prime_pg_all_apps "$cid" "DECLINED"
+
+    # 3. POST /bookings — POINT 50k + CARD 100k 복합. POINT 먼저 성공, CARD에서 DECLINED.
+    #    → PaymentComposer가 POINT inline refund → CompensationService가 3단계(POINT/STOCK/REDIS) 모두 기록.
+    note "3. POST /bookings — POINT 50,000 + CARD 100,000 (CARD가 DECLINED 받을 예정)"
+    local resp status
+    resp=$(curl -fsS -X POST "$NGINX_URL/bookings" \
+        -H "X-User-Id: $user" -H "Content-Type: application/json" \
+        -d "{\"checkoutId\":\"$cid\",\"productId\":1,\"payments\":[{\"method\":\"POINT\",\"amount\":50000},{\"method\":\"CARD\",\"amount\":100000}]}" 2>/dev/null || echo "")
+    status=$(echo "$resp" | grep -oE '"status":"[^"]+"' | cut -d'"' -f4)
+    local reason
+    reason=$(echo "$resp" | grep -oE '"message":"[^"]+"' | cut -d'"' -f4)
+    if [[ "$status" == "FAILED" ]]; then
+        ok "응답 status=FAILED reason=$reason"
+    else
+        fail "응답 status=$status (FAILED 기대)"
+        fails+=("status=$status")
+    fi
+
+    # 4. compensation_step 3건 기록 확인
+    note "4. compensation_step 3단계 모두 기록 확인"
+    local steps
+    steps=$(query_db "SELECT GROUP_CONCAT(step ORDER BY step) FROM compensation_step WHERE checkout_id='$cid'")
+    note "기록된 step: $steps"
+    local expected="DB_STOCK_RESTORED,POINT_REFUNDED,REDIS_GATE_RESTORED"
+    if [[ "$steps" == "$expected" ]]; then
+        ok "3단계 모두 기록됨"
+    else
+        fail "기대 '$expected', 실제 '$steps'"
+        fails+=("steps=$steps")
+    fi
+
+    # 5. payment / booking 상태 확인
+    note "5. payment / booking 상태 확인"
+    local p_status b_status
+    p_status=$(query_db "SELECT status FROM payment WHERE checkout_id='$cid'")
+    b_status=$(query_db "SELECT status FROM booking WHERE checkout_id='$cid'")
+    note "payment.status=$p_status, booking.status=$b_status"
+    if [[ "$p_status" == "COMPENSATED" && "$b_status" == "FAILED" ]]; then
+        ok "payment=COMPENSATED, booking=FAILED"
+    else
+        fail "기대 payment=COMPENSATED booking=FAILED, 실제 p=$p_status b=$b_status"
+        fails+=("payment=$p_status,booking=$b_status")
+    fi
+
+    # 6. stock 복구 확인
+    note "6. stock.qty 복구 확인 (10이어야 함 — 보상으로 되돌아옴)"
+    local stock
+    stock=$(query_db "SELECT qty FROM stock WHERE product_id=1")
+    if [[ "$stock" == "10" ]]; then
+        ok "stock=10 (DB stock 복구됨)"
+    else
+        fail "stock=$stock (10 기대)"
+        fails+=("stock=$stock")
+    fi
+
+    if [[ ${#fails[@]} -eq 0 ]]; then
+        record "payment-failure" "PASS" "FAILED + 3-step 보상 완료 + stock 복구"
+    else
+        record "payment-failure" "FAIL" "failed: ${fails[*]}"
+    fi
+}
+
+run_payment_pending() {
+    stage "결제 결과 불명 → 자동 복구 — PENDING → APPROVED 전이"
+    reset_state
+    reset_pg_all_apps
+
+    local fails=()
+
+    # 1. checkoutId 발급
+    note "1. GET /checkout"
+    local cid
+    cid=$(curl -fsS "$NGINX_URL/checkout?productId=1" -H "X-User-Id: pf-pay-pending" 2>/dev/null \
+        | grep -oE '"checkoutId":"[^"]+"' | cut -d'"' -f4 || echo "")
+    if [[ -z "$cid" ]]; then
+        fail "GET 실패"
+        record "payment-pending" "FAIL" "GET broken"
+        return 1
+    fi
+    ok "checkoutId=${cid:0:8}…"
+
+    # 2. PG 결과를 PENDING으로 prime — *양 app 모두*
+    note "2. /test/pg/prime PENDING — PG 응답 미수신 시뮬, app-1/app-2 둘 다"
+    prime_pg_all_apps "$cid" "PENDING"
+
+    # 3. POST /bookings — 200 PENDING 기대
+    note "3. POST /bookings — 200 PENDING 기대"
+    local resp status
+    resp=$(curl -fsS -X POST "$NGINX_URL/bookings" \
+        -H "X-User-Id: pf-pay-pending" -H "Content-Type: application/json" \
+        -d "{\"checkoutId\":\"$cid\",\"productId\":1,\"payments\":[{\"method\":\"CARD\",\"amount\":150000}]}" 2>/dev/null || echo "")
+    status=$(echo "$resp" | grep -oE '"status":"[^"]+"' | cut -d'"' -f4)
+    if [[ "$status" == "PENDING" ]]; then
+        ok "응답 status=PENDING"
+    else
+        fail "응답 status=$status (PENDING 기대)"
+        fails+=("status=$status")
+    fi
+
+    # 4. DB 상태 — payment.RESULT_PENDING / booking.PENDING_PAYMENT
+    note "4. DB 상태 확인 — RESULT_PENDING / PENDING_PAYMENT"
+    local p_status b_status
+    p_status=$(query_db "SELECT status FROM payment WHERE checkout_id='$cid'")
+    b_status=$(query_db "SELECT status FROM booking WHERE checkout_id='$cid'")
+    note "payment.status=$p_status, booking.status=$b_status"
+    if [[ "$p_status" == "RESULT_PENDING" && "$b_status" == "PENDING_PAYMENT" ]]; then
+        ok "RESULT_PENDING / PENDING_PAYMENT"
+    else
+        fail "기대 RESULT_PENDING/PENDING_PAYMENT, 실제 p=$p_status b=$b_status"
+        fails+=("status=$p_status/$b_status")
+    fi
+
+    # 5. PG 결과를 APPROVED로 갱신 — 늦은 응답 도착 시뮬, *양 app 모두*
+    note "5. /test/pg/prime APPROVED — 늦게 PG 응답 도착 시뮬, app-1/app-2 둘 다"
+    prime_pg_all_apps "$cid" "APPROVED"
+
+    # 6. PaymentResolutionJob 즉시 동기 호출 — 어느 app이든 처리하면 됨
+    note "6. /test/pg/resolve-pending — 결과조회 잡 강제 트리거"
+    resolve_pending_all_apps
+    sleep 1
+
+    # 7. 최종 상태 — payment.SUCCEEDED / booking.CONFIRMED
+    note "7. 최종 상태 확인 — SUCCEEDED / CONFIRMED"
+    p_status=$(query_db "SELECT status FROM payment WHERE checkout_id='$cid'")
+    b_status=$(query_db "SELECT status FROM booking WHERE checkout_id='$cid'")
+    note "payment.status=$p_status, booking.status=$b_status"
+    if [[ "$p_status" == "SUCCEEDED" && "$b_status" == "CONFIRMED" ]]; then
+        ok "RESULT_PENDING → SUCCEEDED 전이 + booking CONFIRMED 마감"
+    else
+        fail "기대 SUCCEEDED/CONFIRMED, 실제 p=$p_status b=$b_status"
+        fails+=("final=$p_status/$b_status")
+    fi
+
+    if [[ ${#fails[@]} -eq 0 ]]; then
+        record "payment-pending" "PASS" "PENDING → 결과조회 → SUCCEEDED 전이"
+    else
+        record "payment-pending" "FAIL" "failed: ${fails[*]}"
+    fi
+}
+
 run_partial_instance_down() {
     stage "부분장애 — app-1 다운 시 app-2로 service continuity"
     reset_state
@@ -590,6 +789,8 @@ action_load_all() {
 
 action_partial_redis()    { require_env || return 1; reset_records; run_partial_redis_down || true;    show_summary; }
 action_partial_instance() { require_env || return 1; reset_records; run_partial_instance_down || true; show_summary; }
+action_payment_failure()  { require_env || return 1; reset_records; run_payment_failure || true;      show_summary; }
+action_payment_pending()  { require_env || return 1; reset_records; run_payment_pending || true;      show_summary; }
 
 action_restart() {
     stage "환경 재기동 (down → up)"
@@ -737,6 +938,8 @@ ${BOLD}부하${RESET}
 ${BOLD}부분장애${RESET}
   ${BOLD}[8]${RESET} Redis 다운         503 + DB 우회 없음 + 자동 복구
   ${BOLD}[9]${RESET} 인스턴스 1대 다운  app-2만으로 service continuity
+  ${BOLD}[p]${RESET} 결제 실패 → 보상   DECLINED 시뮬 + compensation_step 3단계 + stock 복구
+  ${BOLD}[u]${RESET} 결제 결과 불명     PENDING → APPROVED 전이, 결과조회 잡 자동 복구 검증
 
 ${BOLD}환경${RESET}
   ${BOLD}[g]${RESET} 모니터링 토글      Prometheus + Grafana 켜기 / 끄기
@@ -776,6 +979,8 @@ main() {
             9) action_partial_instance || true; press_enter_to_continue ;;
             s|S) action_load_stress || true;  press_enter_to_continue ;;
             b|B) action_load_burst || true;   press_enter_to_continue ;;
+            p|P) action_payment_failure || true; press_enter_to_continue ;;
+            u|U) action_payment_pending || true; press_enter_to_continue ;;
             g|G) action_observability_toggle || true; press_enter_to_continue ;;
             r|R) action_restart || true;      press_enter_to_continue ;;
             c|C) action_teardown_and_exit ;;
