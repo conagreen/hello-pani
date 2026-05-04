@@ -1,13 +1,14 @@
 # 선택 확장 — Prometheus + Grafana로 부하 진행을 실시간 시각화한다.
-# 기본 데모 경로는 docker-compose.yml + ./gradlew bootRun이고, 이 파일은 옵션이다.
 #
-# 사용법:
-#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
-#   ./gradlew bootRun                     # 호스트에서 실행
-#   ./scripts/test-load.sh                # 다른 셸에서 부하
-#   open http://localhost:3000            # admin / admin (첫 로그인 시 변경 가능)
+# 사용법 (권장 — review.sh가 자동으로 모두 처리):
+#   ./review.sh                           # 메뉴에서 [g] 모니터링 토글
 #
-# Linux Docker에서는 host.docker.internal 매핑을 위해 host-gateway가 필요하다.
+# 수동 사용:
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml -f docker-compose.observability.yml up -d
+#   open http://localhost:3000/d/hello-pani-main   # admin / admin
+#
+# scrape target은 docker-compose.scale.yml의 app-1, app-2다 (observability/prometheus.yml).
+# host에서 ./gradlew bootRun을 같이 쓰려면 prometheus.yml에 host.docker.internal:8080을 추가하라.
 
 services:
   # base docker-compose.yml의 mysql 서비스에 perf_schema 권한 init script만 추가한다.
@@ -22,8 +23,6 @@ services:
       - "9090:9090"
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=2h

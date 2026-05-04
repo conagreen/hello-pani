@@ -42,29 +42,31 @@ jq --version        # 메트릭 조회 시
 >
 > Docker는 데몬 권한이 필요하다. macOS는 Docker Desktop / colima 실행으로 충분하고, Linux는 `sudo usermod -aG docker $USER` 후 재로그인하면 sudo 없이 사용할 수 있다.
 
-## 빠른 실행
+## 빠른 실행 — 한 줄로 모든 검증
+
+```bash
+./review.sh
+```
+
+메뉴가 뜨면 [1] 빠른 검증 (~1분) 또는 [2] 풀 검증 (~5분, 분산 환경 포함)을 고른다.
+prerequisite 자동 점검 → smoke → 정합성 → 멱등성 → (옵션) 분산 환경 → 결과 표 순서로 진행한다.
+
+성공 시 모든 단계가 ✓로 표시되며, 실패하면 어디서 깨졌는지가 한눈에 보인다.
+
+### 직접 실행
 
 ```bash
 ./gradlew bootRun
 ```
 
-Spring Boot Docker Compose가 `docker-compose.yml`을 감지해 MySQL / Redis를 자동 기동한다. 기동이 끝나면:
+Spring Boot Docker Compose가 `docker-compose.yml`을 감지해 MySQL / Redis를 자동 기동한다.
 
 ```bash
-curl -s http://localhost:8080/actuator/health
-# {"status":"UP",...}
+curl -s http://localhost:8080/actuator/health   # {"status":"UP",...}
 ```
 
-## 수동 인프라 실행
-
-Docker 인프라를 직접 띄우고 싶으면:
-
-```bash
-docker compose up -d
-./gradlew bootRun
-```
-
-`docker-compose.yml`은 MySQL과 Redis 정의의 단일 원천이다. 어떤 경로로 띄워도 같은 인프라가 올라온다.
+`docker-compose.yml`은 MySQL과 Redis 정의의 단일 원천이다.
+인프라를 별도로 띄우고 싶으면 `docker compose up -d` 후 `./gradlew bootRun`.
 
 ## API
 
@@ -319,6 +321,22 @@ INSERT INTO compensation_step (checkout_id, step) VALUES (?, ?);
 
 ## 검증
 
+### 한 번에 — `./review.sh`
+
+처음 받은 사람의 진입점이다. prereq 점검 → 단계별 실행 → 결과 표를 한 번에 보여준다.
+
+```bash
+./review.sh
+```
+
+| 옵션 | 시간 | 검증 단계 |
+|---|---|---|
+| **[1] 빠른 검증** | ~1분 | smoke + 정합성(50 VU → 10 CONFIRMED) + 멱등성(같은 checkoutId 20 VU → 1건) |
+| **[2] 풀 검증** | ~5분 | 위 + 분산 환경(app x2 + nginx)에서도 동일 결과 |
+| **[3] 정리** | - | 모든 컨테이너 down |
+
+각 단계가 끝나면 표로 pass/fail이 표시되고, 실패하면 어디서 깨졌는지가 한눈에 보인다.
+
 ### 단위 / 통합 테스트
 
 ```bash
@@ -328,31 +346,20 @@ INSERT INTO compensation_step (checkout_id, step) VALUES (?, ?);
 - 142 tests, 0 failures (`CheckoutRedisFailFastTest` 포함)
 - 테스트는 Spring Boot Docker Compose가 띄운 실제 MySQL / Redis로 실행된다.
 
-### k6 부하 시나리오
+### 심층 / 직접 호출
 
-아래 스크립트는 앱이 이미 떠 있으면 그대로 사용하고, 떠 있지 않으면 `./gradlew bootRun`을 백그라운드로 띄운 뒤 검증한다.
+`./review.sh`가 호출하는 단위 스크립트들이다. 시나리오만 따로 돌리고 싶을 때 사용한다.
 
 ```bash
 ./scripts/test-consistency.sh  # 50 VU 동시 진입 → 정확히 10건 CONFIRMED
 ./scripts/test-idempotency.sh  # 같은 checkoutId 20 VU → Booking/Payment 1건
 ./scripts/test-load.sh         # 피크 부하 (1,000 RPS / 60s, build/load-report.md 생성)
+./scripts/test-distributed.sh  # app x2 + nginx 분산 검증 (review.sh [2]와 동일 핵심)
 ./scripts/test-all.sh          # ./gradlew test --rerun-tasks + k6 2종
 ```
 
-### 분산 환경 데모 (app x2 + nginx)
-
-요구사항의 *"2대 이상 분산 환경"* 가정을 *문서가 아니라 실행 결과로* 증명한다.
-한 줄이면 끝난다.
-
-```bash
-./scripts/test-distributed.sh
-```
-
-이 스크립트는 `bootBuildImage`로 OCI 이미지를 만들고 `app-1` / `app-2` 두 컨테이너를 같은 MySQL / Redis 위에 띄운 뒤 nginx round-robin 뒤로 50 VU consistency 시나리오를 보낸다.
-정확히 10건만 `CONFIRMED`이고 두 인스턴스 모두에서 booking 로그가 발생하면 통과.
-자세한 의도는 [DECISIONS 쟁점 10](docs/DECISIONS.md#쟁점-10-분산-환경에서의-멀티-인스턴스-안전성)의 *"Walk-the-talk"* 단락.
-
-피크 부하 시나리오와 보고서는 [docs/LOAD.md](docs/LOAD.md)에 한 페이지로 정리되어 있다. 실시간 시각화(Prometheus + Grafana)도 같은 문서에 옵션으로 안내한다.
+피크 부하 시나리오는 `SCENARIO=browse|rush|spike`로 평시/피크/전환 패턴을 분리해 돌릴 수 있다.
+자세한 사용법과 보고서 형식은 [docs/LOAD.md](docs/LOAD.md). 실시간 시각화(Prometheus + Grafana)도 같은 문서에 옵션으로 안내한다.
 
 통과 기준 (k6 thresholds 자동 검증):
 
