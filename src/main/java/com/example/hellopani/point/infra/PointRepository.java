@@ -29,4 +29,18 @@ public class PointRepository {
             return Optional.empty();
         }
     }
+
+    public int decrement(String userId, long amount) {
+        return jdbcTemplate.update(
+                "UPDATE point_account SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP(6) "
+                        + "WHERE user_id = ? AND balance >= ?",
+                amount, userId, amount);
+    }
+
+    public int increment(String userId, long amount) {
+        return jdbcTemplate.update(
+                "UPDATE point_account SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP(6) "
+                        + "WHERE user_id = ?",
+                amount, userId);
+    }
 }
