@@ -15,11 +15,14 @@ SCENARIO=spike  ./scripts/test-load.sh # 대기 → 풀림 → 폭주 2-phase
 
 ## 시나리오
 
-| 이름 | 패턴 | 기본값 | 보고서 파일 |
-|---|---|---|---|
-| `rush` (기본) | 오픈 직후 즉시 구매. 매 iteration GET + POST | 1,000 RPS / 60s | `build/load-report-rush.md` |
-| `browse` | 오픈 대기 새로고침. GET /checkout만 도배 | 300 RPS / 60s | `build/load-report-browse.md` |
-| `spike` | browse → rush 2-phase | 200/30s → 1,000/30s | `build/load-report-spike.md` |
+| 이름 | 패턴 | 기본값 | 의미 | 보고서 파일 |
+|---|---|---|---|---|
+| `rush` (기본) | 오픈 직후 즉시 구매. 매 iteration GET + POST | 1,000 RPS / 60s | 피크 baseline | `build/load-report-rush.md` |
+| `browse` | 오픈 대기 새로고침. GET /checkout만 도배 | 50 RPS / 60s | 평시 baseline | `build/load-report-browse.md` |
+| `spike` | browse → rush 2-phase | 50/30s → 1,000/30s | 평시 → 피크 전환 | `build/load-report-spike.md` |
+
+기본값은 요구사항이 명시한 *"평시 50 TPS, 오픈 시 1~5분간 500~1000 TPS"* 와 직접 매핑된다.
+필요하면 `PEAK_RPS`, `BROWSE_RPS` 환경변수로 임의 수치를 덮어쓸 수 있다.
 
 대시보드 "엔드포인트별 트래픽" 패널을 보면 시나리오가 즉시 구분된다.
 

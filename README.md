@@ -2,14 +2,17 @@
 
 00시 오픈 한정 상품 선착순 예약 / 결제 시스템.
 
-- 한정 재고 10개를 두고 분당 30,000 ~ 60,000건 규모의 트래픽이 쏠리는 상황을 가정한다.
+- 한정 재고 10개를 두고 평시 50 TPS / 오픈 시 1~5분간 500~1000 TPS 트래픽이 몰리는 상황을 가정한다.
 - 핵심은 **거절을 빠르고 공정하게 수행하는 시스템**이다. 정상 운영 상태에서 정확히 10건만 성공하고 어떤 경우에도 초과 판매를 만들지 않는다.
+- 인스턴스 로컬 상태가 0이라 2대 이상 분산 환경에서도 같은 결과를 낸다 (DECISIONS 쟁점 10).
 
 더 자세히 보고 싶으면 다음 문서를 본다.
 
-- [docs/DECISIONS.md](docs/DECISIONS.md) — 왜 그렇게 선택했는가
-- [docs/DOMAIN.md](docs/DOMAIN.md) — 무엇을 만들었는가
-- [docs/TASKS.md](docs/TASKS.md) — 구현 순서와 완료 체크리스트
+- [docs/DECISIONS.md](docs/DECISIONS.md) — 왜 그렇게 선택했는가 (쟁점 11개)
+- [docs/DOMAIN.md](docs/DOMAIN.md) — 무엇을 만들었는가 (모델/흐름/ERD)
+- [docs/AI-LOG.md](docs/AI-LOG.md) — AI 도구를 어떻게 썼는가
+- [docs/TASKS.md](docs/TASKS.md) — 구현 단위와 검증 기록
+- [docs/LOAD.md](docs/LOAD.md) — 부하 시나리오와 보고서
 
 ## 사전 준비
 
@@ -257,58 +260,31 @@ erDiagram
 
 ### DDL
 
-전체 스키마는 [`src/main/resources/schema.sql`](src/main/resources/schema.sql)에서 관리한다. 핵심 테이블:
+전체 스키마는 [`src/main/resources/schema.sql`](src/main/resources/schema.sql)에서 관리한다.
+ERD에 등장한 9개 테이블의 책임과 핵심 제약을 요약하면:
+
+| 테이블 | 핵심 제약 / 정합성 장치 |
+|---|---|
+| `product` | PK `product_id`. 상품 마스터 |
+| `stock` | PK `product_id`. `chk_stock_qty CHECK (qty >= 0)` — 음수 재고 차단 |
+| `checkout` | PK `checkout_id (CHAR(36))`. status ∈ `ISSUED/USED/EXPIRED` |
+| `booking` | PK `booking_id`. **`UNIQUE (checkout_id)`** — checkoutId 1건 1예약 |
+| `payment` | PK `payment_id`. **`UNIQUE (checkout_id)`** — 같은 checkout에 결제 2개 금지 |
+| `payment_component` | FK `payment_id`. method ∈ `CARD/Y_PAY/POINT` |
+| `point_account` | PK `user_id`. `chk balance >= 0` |
+| `point_ledger` | **`UNIQUE (checkout_id, reason)`** — 차감/복구 멱등 |
+| `compensation_step` | **`UNIQUE (checkout_id, step)`** — 보상 단계별 1회 멱등 |
+
+가장 굵게 강조된 4개의 UNIQUE가 멱등성과 보상의 정합성을 책임진다.
+
+핵심 SQL 두 가지만 인용:
 
 ```sql
-CREATE TABLE IF NOT EXISTS stock (
-    product_id BIGINT      NOT NULL,
-    qty        INT         NOT NULL,
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (product_id),
-    CONSTRAINT chk_stock_qty CHECK (qty >= 0),
-    CONSTRAINT fk_stock_product FOREIGN KEY (product_id) REFERENCES product (product_id)
-);
+-- 최종 재고 선점. affectedRows == 0이면 패배.
+UPDATE stock SET qty = qty - 1 WHERE product_id = ? AND qty > 0;
 
-CREATE TABLE IF NOT EXISTS booking (
-    booking_id   BIGINT      NOT NULL AUTO_INCREMENT,
-    checkout_id  CHAR(36)    NOT NULL,
-    user_id      VARCHAR(64) NOT NULL,
-    product_id   BIGINT      NOT NULL,
-    status       VARCHAR(20) NOT NULL,
-    total_amount BIGINT      NOT NULL,
-    created_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    confirmed_at DATETIME(6) NULL,
-    PRIMARY KEY (booking_id),
-    CONSTRAINT uk_booking_checkout UNIQUE (checkout_id),
-    CONSTRAINT chk_booking_status CHECK (status IN ('PENDING_PAYMENT','CONFIRMED','FAILED'))
-);
-
-CREATE TABLE IF NOT EXISTS payment (
-    payment_id          BIGINT      NOT NULL AUTO_INCREMENT,
-    checkout_id         CHAR(36)    NOT NULL,
-    booking_id          BIGINT      NOT NULL,
-    user_id             VARCHAR(64) NOT NULL,
-    status              VARCHAR(20) NOT NULL,
-    total_amount        BIGINT      NOT NULL,
-    pg_idempotency_key  VARCHAR(64) NOT NULL,
-    created_at          DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    completed_at        DATETIME(6) NULL,
-    PRIMARY KEY (payment_id),
-    CONSTRAINT uk_payment_checkout UNIQUE (checkout_id),
-    CONSTRAINT chk_payment_status CHECK (status IN
-        ('PROCESSING','RESULT_PENDING','SUCCEEDED','FAILED','COMPENSATING','COMPENSATED','REFUND_FAILED'))
-);
-
-CREATE TABLE IF NOT EXISTS compensation_step (
-    compensation_step_id BIGINT      NOT NULL AUTO_INCREMENT,
-    checkout_id          CHAR(36)    NOT NULL,
-    step                 VARCHAR(32) NOT NULL,
-    completed_at         DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (compensation_step_id),
-    CONSTRAINT uk_compensation_step UNIQUE (checkout_id, step),
-    CONSTRAINT chk_compensation_step CHECK (step IN
-        ('POINT_REFUNDED','DB_STOCK_RESTORED','REDIS_GATE_RESTORED'))
-);
+-- 보상 단계 멱등 기록. 같은 (checkout_id, step) 두 번째 INSERT는 UNIQUE 위반으로 거절된다.
+INSERT INTO compensation_step (checkout_id, step) VALUES (?, ?);
 ```
 
 씨드 데이터: 한정 상품 1개(`product_id=1`, 가격 150,000), `stock.qty=10`, `point_account('test-user-1', 50000)`.
@@ -349,7 +325,7 @@ CREATE TABLE IF NOT EXISTS compensation_step (
 ./gradlew test
 ```
 
-- 135 tests, 0 failures
+- 142 tests, 0 failures (`CheckoutRedisFailFastTest` 포함)
 - 테스트는 Spring Boot Docker Compose가 띄운 실제 MySQL / Redis로 실행된다.
 
 ### k6 부하 시나리오
@@ -362,6 +338,19 @@ CREATE TABLE IF NOT EXISTS compensation_step (
 ./scripts/test-load.sh         # 피크 부하 (1,000 RPS / 60s, build/load-report.md 생성)
 ./scripts/test-all.sh          # ./gradlew test --rerun-tasks + k6 2종
 ```
+
+### 분산 환경 데모 (app x2 + nginx)
+
+요구사항의 *"2대 이상 분산 환경"* 가정을 *문서가 아니라 실행 결과로* 증명한다.
+한 줄이면 끝난다.
+
+```bash
+./scripts/test-distributed.sh
+```
+
+이 스크립트는 `bootBuildImage`로 OCI 이미지를 만들고 `app-1` / `app-2` 두 컨테이너를 같은 MySQL / Redis 위에 띄운 뒤 nginx round-robin 뒤로 50 VU consistency 시나리오를 보낸다.
+정확히 10건만 `CONFIRMED`이고 두 인스턴스 모두에서 booking 로그가 발생하면 통과.
+자세한 의도는 [DECISIONS 쟁점 10](docs/DECISIONS.md#쟁점-10-분산-환경에서의-멀티-인스턴스-안전성)의 *"Walk-the-talk"* 단락.
 
 피크 부하 시나리오와 보고서는 [docs/LOAD.md](docs/LOAD.md)에 한 페이지로 정리되어 있다. 실시간 시각화(Prometheus + Grafana)도 같은 문서에 옵션으로 안내한다.
 
@@ -399,15 +388,22 @@ curl -s http://localhost:8080/actuator/metrics/redis.gate.failure?tag=reason:SOL
 
 커스텀 메트릭 목록은 [docs/DOMAIN.md](docs/DOMAIN.md#검증과-관측)에 요약되어 있다.
 
-## 하지 않은 것
+## 범위 정리
 
-이 프로젝트는 다음을 만들지 않는다. 문서나 응답 어디서도 구현된 것처럼 약속하지 않는다.
+### 만들지 않은 것 (의도적 제외)
 
-- 회원가입 / 로그인 / 권한 시스템
-- 실제 PG SDK 연동 (Fake로 대체)
+문서나 응답 어디서도 구현된 것처럼 약속하지 않는다.
+
+- 회원가입 / 로그인 / 권한 시스템 (요구사항이 명시적으로 제외)
+- 실제 PG SDK 연동 (`PgClient` 인터페이스 + `FakePgClient`로 대체. 요구사항이 명시적으로 허용)
 - 쿠폰, 장바구니, 정산, 매출 리포트, 관리자 API
 - 대기열 UI, SSE, polling
-- 잔여 재고 사용자 노출
-- Redis Cluster 기본 구성 (선택 확장)
-- Prometheus remote-write / Grafana dashboard (선택 확장)
-- k6 스파이크 / Redis 장애 자동 시나리오 (선택 확장)
+- 잔여 재고 사용자 노출 ([DECISIONS 쟁점 11](docs/DECISIONS.md#쟁점-11-잔여-재고-비노출))
+- Redis Cluster / Sentinel 기본 구성 (단일 Redis + fail-fast로 한정. [DECISIONS 쟁점 5](docs/DECISIONS.md#쟁점-5-redis-장애))
+
+### 선택 확장으로 제공하는 것 (옵트인)
+
+기본 데모 경로(`./gradlew bootRun`)에는 영향 없지만, 별도 compose 파일을 함께 띄우면 활성화된다.
+
+- **Prometheus + Grafana 대시보드** — `docker-compose.observability.yml` + `observability/` 디렉토리. 5개 Row, 23개 패널 (booking 트래픽 / 앱 부하 / MySQL 부하 / Redis 부하 / 결과 요약).
+- **k6 부하 시나리오 3종** — `rush` / `browse` / `spike`. 요구사항의 "평시 50 / 피크 500-1000"과 직접 매핑. 자세한 사용법은 [docs/LOAD.md](docs/LOAD.md).

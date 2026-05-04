@@ -1,0 +1,68 @@
+# 분산 환경 데모 — app x2 + nginx 라운드로빈.
+#
+# 사용:
+#   ./gradlew bootBuildImage          # hello-pani:0.0.1-SNAPSHOT 이미지 생성 (1회)
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml up -d
+#   curl http://localhost:18080/actuator/health   # nginx 통해 round-robin
+#
+# 또는 한 줄로:
+#   ./scripts/test-distributed.sh
+#
+# 의도:
+# - "정말 stateless하게 짜였는지"의 운영 증명. 같은 사용자가 GET을 app-1에서 받고 POST를 app-2로 보내도 결과가 같다.
+# - "수평 확장에 고통이 없는 구조인지"의 증명. 새 인스턴스를 띄우는 데 별도 leader election / 마이그레이션 / 설정 동기화가 필요 없다.
+# - DECISIONS.md 쟁점 10의 walk-the-talk.
+
+services:
+  app-1:
+    image: hello-pani:0.0.1-SNAPSHOT
+    container_name: hello-pani-app-1
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/hellopani
+      SPRING_DATASOURCE_USERNAME: hellopani
+      SPRING_DATASOURCE_PASSWORD: hellopani
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SERVER_PORT: "8080"
+      # 인스턴스 식별자 — 로그에서 어디 인스턴스인지 구분용.
+      SPRING_APPLICATION_NAME: hello-pani-app-1
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # paketo bellsoft-liberica run-jammy-tiny 이미지엔 shell도 없어서 컨테이너 내부 healthcheck가 불가능하다.
+    # 실제 readiness는 ./scripts/test-distributed.sh가 nginx (host:8081) 앞에서 외부 폴링으로 검증한다.
+
+  app-2:
+    image: hello-pani:0.0.1-SNAPSHOT
+    container_name: hello-pani-app-2
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/hellopani
+      SPRING_DATASOURCE_USERNAME: hellopani
+      SPRING_DATASOURCE_PASSWORD: hellopani
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SERVER_PORT: "8080"
+      SPRING_APPLICATION_NAME: hello-pani-app-2
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: hello-pani-nginx
+    ports:
+      # 호스트 18080 — bootRun이 점유할 수 있는 8080 / 다른 dev server가 잡을 수 있는 8081과 분리.
+      - "18080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      # service_started만으로 충분 — nginx는 upstream이 아직 준비 안 되면 502를 반환하고,
+      # 스크립트가 외부에서 200 OK를 받을 때까지 폴링한다.
+      app-1:
+        condition: service_started
+      app-2:
+        condition: service_started

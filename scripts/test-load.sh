@@ -3,9 +3,9 @@
 # 피크 부하 시나리오 — k6/peak.js를 실행하고 build/load-report-${SCENARIO}.md 생성.
 #
 # 시나리오 (SCENARIO 환경변수):
-#   rush   기본. 오픈 직후 즉시 구매 패턴. 1000 RPS / 60s
-#   browse 오픈 대기 새로고침 패턴. GET /checkout만. 300 RPS / 60s
-#   spike  대기 → 풀림 → 폭주 2-phase. browse(200/30s) → rush(1000/30s)
+#   rush   기본. 오픈 직후 즉시 구매 패턴. 1000 RPS / 60s (피크 baseline)
+#   browse 오픈 대기 새로고침 패턴. GET /checkout만. 50 RPS / 60s (평시 baseline)
+#   spike  대기 → 풀림 → 폭주 2-phase. browse(50/30s, 평시) → rush(1000/30s, 피크)
 #
 # 환경변수:
 #   BASE_URL          대상 (기본: http://localhost:8080).
@@ -53,10 +53,10 @@ case "$SCENARIO" in
         echo "  rush: ${PEAK_RPS:-1000} RPS / ${PEAK_DURATION:-60s}"
         ;;
     browse)
-        echo "  browse: ${PEAK_RPS:-300} RPS / ${PEAK_DURATION:-60s} (GET /checkout만)"
+        echo "  browse: ${PEAK_RPS:-50} RPS / ${PEAK_DURATION:-60s} (GET /checkout만, 평시 baseline)"
         ;;
     spike)
-        echo "  browse → rush: ${BROWSE_RPS:-200} RPS / ${BROWSE_DURATION:-30s} → ${PEAK_RPS:-1000} RPS / ${PEAK_DURATION:-30s}"
+        echo "  browse → rush: ${BROWSE_RPS:-50} RPS / ${BROWSE_DURATION:-30s} (평시) → ${PEAK_RPS:-1000} RPS / ${PEAK_DURATION:-30s} (피크)"
         ;;
 esac
 echo

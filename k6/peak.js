@@ -8,11 +8,11 @@
 //
 //   SCENARIO=browse
 //     "오픈 대기 중 새로고침" 패턴. GET /checkout만 도배. POST 없음.
-//     변수: PEAK_RPS (300), PEAK_DURATION (60s), PEAK_RAMP (5s)
+//     변수: PEAK_RPS (50, 평시 baseline), PEAK_DURATION (60s), PEAK_RAMP (5s)
 //
 //   SCENARIO=spike
 //     "대기 → 풀림 → 폭주" 2-phase. browse phase 후 rush phase가 이어진다.
-//     변수: BROWSE_RPS (200), BROWSE_DURATION (30s), PEAK_RPS (1000), PEAK_DURATION (30s),
+//     변수: BROWSE_RPS (50, 평시), BROWSE_DURATION (30s), PEAK_RPS (1000), PEAK_DURATION (30s),
 //           PEAK_RAMP (5s)
 //
 // 공통 변수: BASE_URL, PRODUCT_ID, PRICE
@@ -28,10 +28,10 @@ const PRODUCT_ID = __ENV.PRODUCT_ID || '1';
 const PRICE = parseInt(__ENV.PRICE || '150000');
 
 const SCENARIO = (__ENV.SCENARIO || 'rush').toLowerCase();
-const PEAK_RPS = parseInt(__ENV.PEAK_RPS || (SCENARIO === 'browse' ? '300' : '1000'));
+const PEAK_RPS = parseInt(__ENV.PEAK_RPS || (SCENARIO === 'browse' ? '50' : '1000'));
 const PEAK_DURATION = __ENV.PEAK_DURATION || (SCENARIO === 'spike' ? '30s' : '60s');
 const PEAK_RAMP = __ENV.PEAK_RAMP || (SCENARIO === 'browse' ? '5s' : '15s');
-const BROWSE_RPS = parseInt(__ENV.BROWSE_RPS || '200');
+const BROWSE_RPS = parseInt(__ENV.BROWSE_RPS || '50');
 const BROWSE_DURATION = __ENV.BROWSE_DURATION || '30s';
 
 const browseHits = new Counter('browse_hits_total');

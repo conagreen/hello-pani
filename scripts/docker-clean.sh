@@ -5,7 +5,8 @@
 # 기본 동작 (인자 없음): hello-pani 관련 컨테이너만 정지 + 제거. 볼륨은 유지.
 # --volumes / -v       : 볼륨까지 삭제 (MySQL 데이터, Redis 데이터 모두 사라짐)
 # --observability-only : Prometheus / Grafana / exporters만 정리 (mysql / redis는 유지)
-# --all                : observability + base 모두 정리
+# --scale-only         : 분산 데모 stack (app-1, app-2, nginx)만 정리
+# --all                : observability + scale + base 모두 정리
 
 set -euo pipefail
 
@@ -22,6 +23,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --observability-only)
             MODE="observability"
+            ;;
+        --scale-only)
+            MODE="scale"
             ;;
         --all)
             MODE="all"
@@ -44,6 +48,7 @@ if $DELETE_VOLUMES; then
 fi
 
 OBS_SERVICES=(prometheus grafana redis-exporter mysql-exporter)
+SCALE_SERVICES=(app-1 app-2 nginx)
 
 case "$MODE" in
     observability)
@@ -54,14 +59,21 @@ case "$MODE" in
         docker compose -f docker-compose.yml -f docker-compose.observability.yml \
             rm -f "${OBS_SERVICES[@]}" 2>/dev/null || true
         ;;
+    scale)
+        echo "stopping scale stack only (${SCALE_SERVICES[*]})..."
+        docker compose -f docker-compose.yml -f docker-compose.scale.yml \
+            stop "${SCALE_SERVICES[@]}" 2>/dev/null || true
+        docker compose -f docker-compose.yml -f docker-compose.scale.yml \
+            rm -f "${SCALE_SERVICES[@]}" 2>/dev/null || true
+        ;;
     all)
-        echo "stopping ALL containers (app infra + observability)..."
-        docker compose -f docker-compose.yml -f docker-compose.observability.yml down $down_args 2>/dev/null || true
+        echo "stopping ALL containers (app infra + observability + scale)..."
+        docker compose -f docker-compose.yml -f docker-compose.observability.yml -f docker-compose.scale.yml down $down_args 2>/dev/null || true
         ;;
     default)
         # 양쪽 다 정리하지만 mysql/redis 데이터 볼륨은 유지하는 게 기본
         echo "stopping all hello-pani containers (volumes preserved unless --volumes)..."
-        docker compose -f docker-compose.yml -f docker-compose.observability.yml down $down_args 2>/dev/null || true
+        docker compose -f docker-compose.yml -f docker-compose.observability.yml -f docker-compose.scale.yml down $down_args 2>/dev/null || true
         ;;
 esac
 

@@ -195,7 +195,7 @@ PROCESSING
 
 - 현재 모델은 풍부한 객체 생명주기보다 DB row snapshot에 가깝다.
 - 핵심 행위는 `PaymentValidator`, `PaymentComposer`, `CompensationService`, repository 조건부 UPDATE에 있다.
-- 이 프로젝트 목적상 ORM 매핑이나 aggregate 설계보다 동시성 제어를 명확하게 드러내는 편이 낫다.
+- 이 프로젝트의 목적상 ORM 매핑이나 aggregate 설계보다 동시성 제어를 명확하게 드러내는 편이 낫다.
 
 실제 제품으로 확장한다면 Booking/Payment aggregate에 상태 전이 메서드를 더 모으는 방향이 자연스럽다.
 이번 범위에서는 YAGNI를 우선한다.
@@ -255,4 +255,115 @@ DB 스키마와 seed는 `schema.sql`이 단일 원천이다.
 - `/actuator/prometheus`로 Micrometer 메트릭을 노출한다.
 - `docker-compose.observability.yml` + `observability/` 디렉토리에 Prometheus / Grafana 설정과 사전 provisioning 대시보드를 포함했다.
 - 기본 데모 경로(`./gradlew bootRun` + `./scripts/test-load.sh`)에는 추가 부담을 주지 않는다. 사용법은 [LOAD.md](LOAD.md)의 "실시간 시각화" 단락.
-- 
+
+---
+
+## 쟁점 10. 분산 환경에서의 멀티 인스턴스 안전성
+
+요구사항은 "2대 이상의 애플리케이션 서버로 구성된 분산 환경"을 가정한다.
+이 프로젝트는 인스턴스 수에 무관하게 같은 결과를 내도록 설계됐다.
+이 단락은 그 이유를 단계별로 정리한다.
+
+### 인스턴스 로컬 상태 = 0
+
+- 큐, in-memory cache, sticky session 같은 인스턴스 로컬 상태를 두지 않는다.
+- 모든 정합성 결정은 외부 저장소(Redis, MySQL)에서 한다.
+- 그래서 같은 사용자가 다른 인스턴스로 라우팅되어도 결과가 같다.
+
+### 게이트와 멱등성 — Redis 단일 인스턴스의 직렬화
+
+- `stock:{productId}` 차감과 `hold:{checkoutId}` 생성은 단일 Redis Lua script로 원자 실행된다.
+- Lua가 단일 Redis 노드 내에서 직렬화되므로, 서로 다른 앱 인스턴스에서 동시에 들어와도 *Redis가 본 도착 순서*가 유일한 진실이 된다.
+- `SETNX idempotency:{checkoutId}`도 같은 원리로 멱등 진입권을 정확히 1회만 부여한다.
+
+### 최종 재고 — DB 조건부 UPDATE
+
+- `UPDATE stock SET qty = qty - 1 WHERE product_id = ? AND qty > 0`은 RDB 자체의 row-level lock으로 직렬화된다.
+- `affectedRows == 0`이면 *내가 진 거*다. 인스턴스 수, 동시성 정도와 무관하게 정확히 10건만 통과한다.
+- DB unique 제약(`booking.checkout_id`, `payment.checkout_id`)이 *드물지만 발생할 수 있는* 다중 통과 시도를 같은 트랜잭션 내에서 거절한다.
+
+### Scheduled job 동시 실행 — 멱등 transition
+
+`@Scheduled` 잡 두 개(`ExpiryCleanupJob`, `PaymentResolutionJob`)는 인스턴스마다 동시에 돈다.
+잡에 단일 leader election(예: Quartz Cluster, ShedLock)을 *의도적으로 도입하지 않았다*.
+대신 **같은 row에 같은 transition을 두 번 적용해도 안전하도록** 구조를 잡았다.
+
+- `PgClient.lookupResult(pgIdempotencyKey)`: PG 결과는 idempotency key 기준으로 결정적이다. 두 인스턴스가 같은 RESULT_PENDING payment를 동시에 조회해도 같은 결과를 받는다.
+- 상태 전이: PROCESSING → SUCCEEDED, RESULT_PENDING → FAILED 같은 transition은 *최종 상태가 같으면* 두 번 실행해도 결과가 같다.
+- 보상 단계: `compensation_step (checkout_id, step) UNIQUE` 제약으로 같은 단계가 두 번 실행되지 않는다. `point_ledger (checkout_id, reason) UNIQUE`도 같은 역할을 한다.
+- 트랜잭션 충돌: 두 인스턴스가 동시에 같은 row를 UPDATE하면 RDB가 row lock을 직렬화한다. 늦게 들어온 트랜잭션은 같은 최종 상태를 한 번 더 쓸 뿐이다.
+
+비용은 *드물게 발생하는 중복 작업*뿐이다. 정확성을 위해 받아들인다.
+
+### 인프라 측면
+
+- DB 스키마는 `schema.sql`이 단일 원천이고 `CREATE TABLE IF NOT EXISTS` + `INSERT ... ON DUPLICATE KEY UPDATE`라 여러 인스턴스가 동시에 부팅해도 충돌하지 않는다.
+- 시드 INSERT는 `product_id = product_id` 패턴으로 멱등이라 다중 부팅에서 안전.
+- `application.yml`의 모든 설정은 인스턴스 식별자와 무관하다.
+
+### 그러므로
+
+이 시스템에 인스턴스를 N대 띄우는 것은 *부하 분산* 외의 효과가 없다.
+정합성은 Redis Lua + DB 조건부 UPDATE + DB unique + 멱등 transition이라는 4중 게이트가 책임진다.
+한 대를 띄우든 열 대를 띄우든 *정확히 10건만 CONFIRMED, 나머지는 모두 빠르게 거절* 이 동일하다.
+
+### 한계 — 명시
+
+- Redis는 단일 인스턴스다. Redis 자체가 SPOF다. 운영 환경에서는 Sentinel/Cluster를 붙여야 하지만 본 범위에서는 가용성 옵션으로 분리해 둔다.
+- 잡 leader election을 도입하지 않은 만큼, 잡이 무거워지면 N대가 같은 일을 N번 한다. 현재 잡 부하는 `findIssuedExpiredBefore` / `findAllByStatus(RESULT_PENDING)` 정도라 비용이 작지만, 부하가 커지면 ShedLock 도입을 고려한다.
+
+### Walk-the-talk — 분산 환경 데모
+
+위 주장을 *문서가 아니라 실행 결과로* 증명하기 위해 `docker-compose.scale.yml`을 같이 둔다.
+
+```bash
+./scripts/test-distributed.sh
+```
+
+이 한 줄이 다음을 수행한다.
+
+1. `./gradlew bootBuildImage`로 OCI 이미지(`hello-pani:0.0.1-SNAPSHOT`) 1회 생성 (캐시).
+2. `app-1`, `app-2` 두 컨테이너를 같은 `mysql` / `redis`를 공유하는 형태로 띄운다.
+3. `nginx` 컨테이너가 둘 사이를 round-robin 한다 (`X-Upstream` 응답 헤더로 라우팅 인스턴스 노출).
+4. `k6/consistency.js`를 nginx 뒤로 보내 50 VU 동시 진입.
+5. 종료 후 DB에서 `booking.status='CONFIRMED'` 카운트와 `stock.qty`를 확인하고, 두 컨테이너 로그에 booking 처리 흔적이 모두 있는지를 같이 본다.
+
+기대 결과: **`CONFIRMED == 10`, `stock.qty == 0`, 두 인스턴스 모두에서 POST /bookings 처리 발생** (Actuator metric으로 인스턴스별 카운트 비교).
+nginx는 host:18080에 노출된다 (bootRun 8080 / 다른 dev 도구 8081과 충돌 회피).
+
+이 데모가 통과한다는 것은:
+
+- 같은 사용자가 GET을 app-1에서 받고 POST를 app-2로 보내도 (또는 그 반대로) 결과가 같다 — *진짜 stateless*.
+- 두 번째 인스턴스를 띄우는 데 별도 leader election / 마이그레이션 / 설정 동기화가 없다 — *수평 확장 무통증*.
+- N=2가 통과하면 N=10 / N=100도 같은 이유로 통과한다.
+
+---
+
+## 쟁점 11. 잔여 재고 비노출
+
+**선택: GET /checkout과 POST /bookings 어디에서도 정확한 잔여 재고 수를 응답에 담지 않는다**
+
+요구사항이 잔여 재고 노출을 명시적으로 금지하지는 않는다.
+하지만 다음 이유로 *능동적으로 숨기는* 정책을 택했다.
+
+### 왜 숨기는가
+
+- **공정성과의 충돌.** 잔여 재고가 보이면 사용자는 *0이 되기 직전*에 미리 폼을 채우고 대기하다가 일제히 누른다. 결과적으로 "선착순"이 "예측 게임"이 된다 ([쟁점 2](#쟁점-2-공정성)와 같은 정신).
+- **고가용성과의 충돌.** 정확한 잔여 재고는 *Redis gate counter나 DB stock의 실시간 값*이다. 노출하면 캐싱이 어렵고, 사용자마다 매번 정확한 값을 만들어 줘야 해서 거절 경로의 가벼움이 깨진다.
+- **잘못된 신호.** Redis gate를 통과한 사용자도 DB 선점에서 실패할 수 있다. 즉 "잔여 1개"라는 표시는 *조건부 가능성*이지 *내가 살 수 있다*는 약속이 아니다. 사용자에게 보여주면 클레임 비용만 늘어난다.
+
+### 무엇을 보여주는가
+
+- POST 결과만: `CONFIRMED` / `SOLD_OUT_OR_PROCESSING` / `FAILED` / `PENDING`.
+- GET /checkout은 *상품 정보, 가격, 사용 가능 포인트, checkoutId, 만료시각*만 응답한다 — 잔여 수량은 빠져 있다.
+- 운영자 관점의 잔여 재고는 Grafana의 *MySQL stock 쿼리 패널*과 Actuator 메트릭(`booking.confirmed`)으로 확인한다.
+
+### 트레이드오프
+
+- 사용자 UX는 단순해진다 — 누르고 결과를 받는다.
+- 사용자가 "왜 안 됐는지"의 디버깅 단서를 잃는다. 그 대가로 정합성과 공정성을 얻는다.
+- "이미 종료됐습니다"를 게이트 거절 응답(`409 SOLD_OUT_OR_PROCESSING`)으로 갈음한다. 정확하지는 않지만 거절 경로 1건당 비용이 일정하다.
+
+### 만약 노출한다면
+
+추후 노출이 필요하다면 *5초 단위로 Redis cache에서 읽은 근사값*을 헤더로 내보내는 정도로 한정해야 한다. 결코 실시간 정확값을 응답 본문에 담지 않는다.
