@@ -105,14 +105,14 @@
 - [x] `product`, `stock`, `checkout`, `booking`, `payment`, `payment_component`, `point_account`, `point_ledger` 테이블 생성
 - [x] unique 제약 추가: `booking.checkout_id`, `payment.checkout_id`
 - [x] 포인트 멱등 제약 추가: `point_ledger(checkout_id, reason)`
-- [ ] 핵심 외래키 제약 추가: `stock.product_id`, `checkout.product_id`, `booking.checkout_id`, `booking.product_id`, `payment.checkout_id`, `payment.booking_id`, `payment_component.payment_id`, `point_ledger.user_id`, `point_ledger.checkout_id`
+- [x] 핵심 외래키 제약 추가: `stock.product_id`, `checkout.product_id`, `booking.checkout_id`, `booking.product_id`, `payment.checkout_id`, `payment.booking_id`, `payment_component.payment_id`, `point_ledger.user_id`, `point_ledger.checkout_id`
 - [x] seed 데이터 추가: 한정 상품 1개, stock 10개, 테스트 사용자 포인트
 
 완료 조건:
 
 - [x] `schema.sql` 기반 스키마 초기화 테스트 통과
 - [x] seed 데이터 로딩 테스트 통과
-- [ ] ERD 또는 DDL을 README 작성 시 재사용할 수 있는 형태로 정리
+- [x] ERD 또는 DDL을 README 작성 시 재사용할 수 있는 형태로 정리
 
 설계 불변식:
 
@@ -187,9 +187,9 @@
 - [x] Redis Lua 원자 차감 테스트 통과
 - [x] Redis gate 10개 통과 후 11번째 실패 테스트 통과
 - [x] DB 조건부 UPDATE가 qty 0 이하로 내려가지 않는지 테스트
-- [ ] DB 선점 실패 시 Redis gate 복구 테스트 통과
+- [ ] DB 선점 실패 시 Redis gate 복구 테스트 통과 — 단위 테스트는 미작성. 코드 경로(`BookingService.processAcquired`의 `StockReserveFailedException` catch → `stockGate.release`)는 존재하며, k6 consistency 시나리오의 11번째 이후 요청이 이 경로를 통과한다.
 - [x] 같은 checkoutId로 stock / Redis gate 복구를 반복 호출해도 재고가 중복 증가하지 않는지 테스트
-- [ ] 동시성 테스트에서 성공 예약 가능 수가 10개를 넘지 않음
+- [x] 동시성 테스트에서 성공 예약 가능 수가 10개를 넘지 않음 — `k6/consistency.js`가 자동 검증 (`booking_confirmed_total == 10` threshold).
 
 설계 불변식:
 
@@ -373,23 +373,23 @@
 
 작업:
 
-- [ ] README 작성
-- [ ] 기본 실행 방법: `./gradlew bootRun`
-- [ ] 수동 인프라 실행 방법: `docker compose up -d` 후 `./gradlew bootRun`
-- [ ] API 목록과 curl 예시 추가
-- [ ] 아키텍처 요약 추가
-- [ ] POST Booking 시퀀스 다이어그램 추가
-- [ ] ERD 또는 DDL 포함
-- [ ] Redis 장애 정책과 결제 실패 정책 요약
-- [ ] k6 실행 방법과 기대 결과 추가
-- [ ] `docs/DECISIONS.md`, `docs/DOMAIN.md` 링크 추가
+- [x] README 작성
+- [x] 기본 실행 방법: `./gradlew bootRun`
+- [x] 수동 인프라 실행 방법: `docker compose up -d` 후 `./gradlew bootRun`
+- [x] API 목록과 curl 예시 추가
+- [x] 아키텍처 요약 추가
+- [x] POST Booking 시퀀스 다이어그램 추가
+- [x] ERD 또는 DDL 포함
+- [x] Redis 장애 정책과 결제 실패 정책 요약
+- [x] k6 실행 방법과 기대 결과 추가
+- [x] `docs/DECISIONS.md`, `docs/DOMAIN.md` 링크 추가
 
 완료 조건:
 
-- [ ] 새 clone 기준 README만 보고 실행 가능
-- [ ] README의 API 예시가 실제로 동작
-- [ ] README에 ERD 또는 DDL이 직접 포함되어 있음
-- [ ] README에 적은 실행 명령과 검증 명령이 실제 파일과 일치함
+- [x] 새 clone 기준 README만 보고 실행 가능
+- [x] README의 API 예시가 실제로 동작
+- [x] README에 ERD 또는 DDL이 직접 포함되어 있음
+- [x] README에 적은 실행 명령과 검증 명령이 실제 파일과 일치함
 
 설계 불변식:
 
@@ -432,15 +432,15 @@
 
 ## 최종 체크리스트
 
-- [ ] `./gradlew test` 통과
-- [ ] `./gradlew bootRun`으로 로컬 실행 가능
-- [ ] `docker compose up -d` 후 `./gradlew bootRun`으로도 로컬 실행 가능
-- [ ] `GET /checkout` 예시 동작
-- [ ] `POST /bookings` 성공 예시 동작
-- [ ] 동시 요청에서 성공 예약이 정확히 10건
-- [ ] 같은 checkoutId 중복 요청에서 결제 1건만 발생
-- [ ] 결제 실패 시 DB stock과 Redis gate 복구
-- [ ] 결제 실패 보상 재실행 시 DB stock과 Redis gate가 중복 증가하지 않음
-- [ ] Redis 장애 시 DB 우회 없이 `503`
-- [ ] 최종 점검 전 `docs/TASKS.md` 체크박스가 실제 구현 상태와 일치
-- [ ] README에 ERD 또는 DDL 포함
+- [x] `./gradlew test` 통과
+- [x] `./gradlew bootRun`으로 로컬 실행 가능
+- [x] `docker compose up -d` 후 `./gradlew bootRun`으로도 로컬 실행 가능
+- [x] `GET /checkout` 예시 동작
+- [x] `POST /bookings` 성공 예시 동작
+- [x] 동시 요청에서 성공 예약이 정확히 10건
+- [x] 같은 checkoutId 중복 요청에서 결제 1건만 발생
+- [x] 결제 실패 시 DB stock과 Redis gate 복구
+- [x] 결제 실패 보상 재실행 시 DB stock과 Redis gate가 중복 증가하지 않음
+- [x] Redis 장애 시 DB 우회 없이 `503`
+- [x] 최종 점검 전 `docs/TASKS.md` 체크박스가 실제 구현 상태와 일치
+- [x] README에 ERD 또는 DDL 포함
