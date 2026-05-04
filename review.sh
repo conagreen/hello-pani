@@ -237,19 +237,27 @@ run_consistency() {
     stage "정합성 — 50 VU 동시 진입에서 정확히 10건만 CONFIRMED + 인스턴스 분포"
     reset_state
 
+    # 인스턴스 카운터는 cumulative라 before/after delta로 *이번 테스트분*만 본다.
+    local app1_before app2_before
+    app1_before=$(fetch_post_count hello-pani-app-1)
+    app2_before=$(fetch_post_count hello-pani-app-2)
+
     BASE_URL="$NGINX_URL" k6 run -e BASE_URL="$NGINX_URL" \
         -q --no-summary k6/consistency.js >/dev/null 2>&1 || true
 
-    local confirmed stock app1 app2
+    local confirmed stock app1_after app2_after
     confirmed=$(query_db "SELECT COUNT(*) FROM booking WHERE status='CONFIRMED'")
     stock=$(query_db "SELECT qty FROM stock WHERE product_id=1")
-    app1=$(fetch_post_count hello-pani-app-1)
-    app2=$(fetch_post_count hello-pani-app-2)
+    app1_after=$(fetch_post_count hello-pani-app-1)
+    app2_after=$(fetch_post_count hello-pani-app-2)
+    local app1=$(( ${app1_after:-0} - ${app1_before:-0} ))
+    local app2=$(( ${app2_after:-0} - ${app2_before:-0} ))
+
     note "DB CONFIRMED = $confirmed   stock.qty = $stock"
-    note "app-1 POST = ${app1:-0}, app-2 POST = ${app2:-0}"
+    note "이번 테스트 분 (delta): app-1 POST = $app1, app-2 POST = $app2"
 
     if [[ "$confirmed" == "10" && "$stock" == "0" ]]; then
-        if [[ "${app1:-0}" -gt 0 && "${app2:-0}" -gt 0 ]]; then
+        if [[ $app1 -gt 0 && $app2 -gt 0 ]]; then
             ok "정확히 10건 CONFIRMED + 두 인스턴스 모두 트래픽 처리"
             record "consistency" "PASS" "10 CONFIRMED, app-1=$app1 app-2=$app2"
         else
@@ -304,9 +312,13 @@ run_load() {
         k6_args+=(-e "$kv")
     done
 
-    BASE_URL="$NGINX_URL" k6 run "${k6_args[@]}" -q --no-summary k6/peak.js >/dev/null 2>&1 || true
-
     local report="build/load-report-${scenario}.md"
+    # 옛 report 제거 — k6가 실패해도 stale 데이터로 사용자 오인 방지.
+    rm -f "$report"
+
+    # --no-summary는 handleSummary 자체를 비활성화해 report 파일이 안 생김.
+    # 대신 stdout 리다이렉트로 textSummary 출력만 죽이고 파일 출력은 유지.
+    BASE_URL="$NGINX_URL" k6 run "${k6_args[@]}" -q k6/peak.js >/dev/null 2>&1 || true
     local confirmed
     confirmed=$(query_db "SELECT COUNT(*) FROM booking WHERE status='CONFIRMED'")
 
@@ -343,6 +355,33 @@ run_load_browse() { run_load "browse" "평시 50 RPS / 20s" "PEAK_RPS=50" "PEAK_
 run_load_rush()   { run_load "rush"   "피크 1000 RPS / 30s" "PEAK_RPS=1000" "PEAK_DURATION=30s" "PEAK_RAMP=10s"; }
 run_load_spike()  { run_load "spike"  "spike 50 → 1000 전환" "BROWSE_RPS=50" "BROWSE_DURATION=15s" "PEAK_RPS=1000" "PEAK_DURATION=20s" "PEAK_RAMP=5s"; }
 
+# 지속시간만 sub-prompt로 받는다 — Enter면 default. ${default}형식 그대로 재사용 가능 (예: "30s", "5m").
+# 프롬프트는 stderr로 보내야 $()로 캡처될 때 결과 값에 섞이지 않는다.
+prompt_duration() {
+    local default="$1"
+    local input=""
+    printf "${BOLD}지속시간${RESET} (Enter=${default}, 예: 30s / 1m / 5m): " >&2
+    read -r input || true
+    echo "${input:-$default}"
+}
+
+run_load_stress() {
+    local d
+    d=$(prompt_duration "30s")
+    # 2500 RPS는 PDF spec(500-1000)을 한참 넘김 — breaking point 탐색용.
+    # ramp 3s로 시스템에게 약간의 워밍 여유. CONFIRMED == 10 불변식은 같음.
+    run_load "rush" "스트레스 2500 RPS / $d (breaking point)" \
+        "PEAK_RPS=2500" "PEAK_DURATION=$d" "PEAK_RAMP=3s"
+}
+
+run_load_burst() {
+    local d
+    d=$(prompt_duration "60s")
+    # ramp 1s — JIT/JVM warmup 없이 즉시 1000 RPS. 00시 오픈 직격 시나리오에 가장 가깝다.
+    run_load "rush" "콜드 버스트 ramp 1s → 1000 RPS / $d" \
+        "PEAK_RPS=1000" "PEAK_DURATION=$d" "PEAK_RAMP=1s"
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 부분장애 시나리오
 # ─────────────────────────────────────────────────────────────────────────────
@@ -350,6 +389,9 @@ run_load_spike()  { run_load "spike"  "spike 50 → 1000 전환" "BROWSE_RPS=50"
 run_partial_redis_down() {
     stage "부분장애 — Redis 다운 시 503 + DB 우회 차감 없음"
     reset_state
+
+    # 단계별 결과 누적. 마지막에 모두 통과해야 PASS.
+    local fails=()
 
     # 1. baseline GET
     note "1. baseline (Redis up): GET /checkout 정상"
@@ -368,7 +410,7 @@ run_partial_redis_down() {
     docker stop hello-pani-redis-1 >/dev/null 2>&1 || true
     sleep 2
 
-    # 3. GET /checkout — 503 기대 (CheckoutCache.put fail-fast)
+    # 3. GET /checkout — 503 + Retry-After 기대
     note "3. GET /checkout → 503 + Retry-After 기대 (DECISIONS 쟁점 5)"
     local get_resp get_status get_retry
     get_resp=$(curl -s -o /dev/null -w "%{http_code}|%header{retry-after}" \
@@ -379,9 +421,10 @@ run_partial_redis_down() {
         ok "GET → 503 + Retry-After=$get_retry"
     else
         fail "GET 응답 status=$get_status retry-after='$get_retry' (503 기대)"
+        fails+=("GET=$get_status")
     fi
 
-    # 4. POST /bookings — 503 기대 (idempotencyService.tryAcquire fail-fast)
+    # 4. POST /bookings — 503 기대
     note "4. POST /bookings → 503 기대"
     local post_status
     post_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$NGINX_URL/bookings" \
@@ -391,6 +434,7 @@ run_partial_redis_down() {
         ok "POST → 503"
     else
         fail "POST 응답 status=$post_status (503 기대)"
+        fails+=("POST=$post_status")
     fi
 
     # 5. DB stock 무변경 — 가장 중요한 불변식
@@ -401,6 +445,7 @@ run_partial_redis_down() {
         ok "DB stock = 10 (DB 우회 차감 발생 안 함)"
     else
         fail "DB stock = $stock — Redis 장애가 DB로 새어 나감 ❗"
+        fails+=("stock=$stock")
     fi
 
     # 6. Redis 재기동 + circuit breaker 회복
@@ -413,30 +458,40 @@ run_partial_redis_down() {
         fi
         sleep 1
     done
-    # Resilience4j wait_duration_in_open_state: 5s. circuit이 HALF_OPEN으로 전이 후 성공 호출 3건이면 CLOSED.
-    sleep 6
+    sleep 6  # Resilience4j wait_duration_in_open_state
 
     # 7. POST 정상 복구
     note "7. POST 정상 복구 확인"
     reset_state
+    local recovered=false
     local cid2
     cid2=$(curl -fsS "$NGINX_URL/checkout?productId=1" -H "X-User-Id: pf-redis-recover" 2>/dev/null \
         | grep -oE '"checkoutId":"[^"]+"' | cut -d'"' -f4 || echo "")
-    if [[ -z "$cid2" ]]; then
-        warn "복구 후 GET 실패 — circuit breaker 회복 시간 더 필요"
-        record "redis-down" "PASS" "503 + DB 무손상 OK / 복구 latency"
-        return
+    if [[ -n "$cid2" ]]; then
+        local post_status2
+        post_status2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$NGINX_URL/bookings" \
+            -H "X-User-Id: pf-redis-recover" -H "Content-Type: application/json" \
+            -d "{\"checkoutId\":\"$cid2\",\"productId\":1,\"payments\":[{\"method\":\"CARD\",\"amount\":150000}]}" 2>/dev/null || echo "0")
+        if [[ "$post_status2" == "200" ]]; then
+            ok "POST 정상 복구 → 200"
+            recovered=true
+        fi
     fi
-    local post_status2
-    post_status2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$NGINX_URL/bookings" \
-        -H "X-User-Id: pf-redis-recover" -H "Content-Type: application/json" \
-        -d "{\"checkoutId\":\"$cid2\",\"productId\":1,\"payments\":[{\"method\":\"CARD\",\"amount\":150000}]}" 2>/dev/null || echo "0")
-    if [[ "$post_status2" == "200" ]]; then
-        ok "POST 정상 복구 → 200"
-        record "redis-down" "PASS" "503 + DB 무손상 + 자동 복구 OK"
+    if ! $recovered; then
+        fail "복구 후 GET/POST 실패"
+        fails+=("recovery")
+    fi
+
+    # 최종 판정 — 한 단계라도 실패하면 FAIL.
+    if [[ ${#fails[@]} -eq 0 ]]; then
+        record "redis-down" "PASS" "503 + Retry-After + DB 무손상 + 복구"
     else
-        warn "복구 후 POST status=$post_status2"
-        record "redis-down" "PASS" "장애 검증 OK / 복구 partial"
+        local detail="failed: ${fails[*]}"
+        # GET/POST가 503 대신 500이면 거의 확실히 docker 이미지가 stale.
+        if [[ " ${fails[*]} " == *" GET="* || " ${fails[*]} " == *" POST="* ]]; then
+            detail="$detail — docker image가 stale일 가능성 높음. [r] 재기동 → y로 이미지 재빌드 필요."
+        fi
+        record "redis-down" "FAIL" "$detail"
     fi
 }
 
@@ -444,14 +499,15 @@ run_partial_instance_down() {
     stage "부분장애 — app-1 다운 시 app-2로 service continuity"
     reset_state
 
+    local fails=()
+
     # 1. baseline
     note "1. baseline (app-1 + app-2 모두 up)"
 
     # 2. stop app-1
     note "2. docker stop hello-pani-app-1"
     docker stop hello-pani-app-1 >/dev/null 2>&1 || true
-    # nginx max_fails=3 fail_timeout=10s — 첫 실패 후 잠시 routing 시도가 섞일 수 있음
-    sleep 4
+    sleep 4  # nginx passive health check 안정화
 
     # 3. nginx → app-2로만 라우팅되는지 5회 GET으로 smoke
     note "3. 5회 GET /checkout — 모두 app-2로 가야 함"
@@ -466,30 +522,47 @@ run_partial_instance_down() {
         ok "$success/5 GET 성공 — service continuity 유지"
     else
         fail "$success/5 GET 성공 — service continuity 깨짐"
+        fails+=("smoke=$success/5")
     fi
 
     # 4. consistency — single instance에서도 정확히 10 CONFIRMED
     note "4. consistency 시나리오 (50 VU) — app-2만 살아있는 상태"
     reset_state
+    local app1_before app2_before
+    app1_before=$(fetch_post_count hello-pani-app-1)
+    app2_before=$(fetch_post_count hello-pani-app-2)
     BASE_URL="$NGINX_URL" k6 run -e BASE_URL="$NGINX_URL" \
         -q --no-summary k6/consistency.js >/dev/null 2>&1 || true
-    local confirmed app1 app2
+    local confirmed app1_after app2_after
     confirmed=$(query_db "SELECT COUNT(*) FROM booking WHERE status='CONFIRMED'")
-    app1=$(fetch_post_count hello-pani-app-1)
-    app2=$(fetch_post_count hello-pani-app-2)
-    note "DB CONFIRMED = $confirmed (10 기대), app-1=${app1:-0}, app-2=${app2:-0}"
+    app1_after=$(fetch_post_count hello-pani-app-1)
+    app2_after=$(fetch_post_count hello-pani-app-2)
+    local app1=$(( ${app1_after:-0} - ${app1_before:-0} ))
+    local app2=$(( ${app2_after:-0} - ${app2_before:-0} ))
+    note "DB CONFIRMED = $confirmed (10 기대), 이번 테스트 분 delta: app-1=$app1 app-2=$app2"
+
+    if [[ "$confirmed" == "10" ]]; then
+        ok "정확히 10 CONFIRMED 유지"
+    else
+        fail "CONFIRMED=$confirmed (10 기대)"
+        fails+=("confirmed=$confirmed")
+    fi
+    if [[ "${app2:-0}" -gt 0 ]]; then
+        ok "app-2가 트래픽 처리"
+    else
+        fail "app-2가 트래픽 0건 — service continuity 안 됨"
+        fails+=("app-2=0")
+    fi
 
     # 5. restart app-1
     note "5. docker start app-1 — 다음 검증을 위해 복구"
     docker start hello-pani-app-1 >/dev/null 2>&1 || true
     sleep 5
 
-    if [[ "$confirmed" == "10" && "${app2:-0}" -gt 0 ]]; then
-        ok "10 CONFIRMED 유지 (app-2만 서비스) — 분산 환경의 service continuity 증명"
-        record "instance-down" "PASS" "10 CONFIRMED via app-2 only"
+    if [[ ${#fails[@]} -eq 0 ]]; then
+        record "instance-down" "PASS" "10 CONFIRMED via app-2 only — service continuity"
     else
-        fail "기대치 어긋남 — CONFIRMED=$confirmed app-2=${app2:-0}"
-        record "instance-down" "FAIL" "CONFIRMED=$confirmed"
+        record "instance-down" "FAIL" "failed: ${fails[*]}"
     fi
 }
 
@@ -504,6 +577,8 @@ action_idempotency()   { require_env || return 1; reset_records; run_idempotency
 action_load_browse()   { require_env || return 1; reset_records; run_load_browse || true;  show_summary; }
 action_load_rush()     { require_env || return 1; reset_records; run_load_rush || true;    show_summary; }
 action_load_spike()    { require_env || return 1; reset_records; run_load_spike || true;   show_summary; }
+action_load_stress()   { require_env || return 1; reset_records; run_load_stress || true;  show_summary; }
+action_load_burst()    { require_env || return 1; reset_records; run_load_burst || true;   show_summary; }
 action_load_all() {
     require_env || return 1
     reset_records
@@ -656,6 +731,8 @@ ${BOLD}부하${RESET}
   ${BOLD}[5]${RESET} 피크               rush 1000 RPS / 30s
   ${BOLD}[6]${RESET} spike              50 → 1000 RPS 전환
   ${BOLD}[7]${RESET} 부하 전체          4 + 5 + 6
+  ${BOLD}[s]${RESET} 스트레스           2500 RPS / 30s — breaking point 탐색 (지속시간 입력 가능)
+  ${BOLD}[b]${RESET} 콜드 버스트        ramp 1s → 1000 RPS / 60s — JIT 안 데우고 직격 (지속시간 입력 가능)
 
 ${BOLD}부분장애${RESET}
   ${BOLD}[8]${RESET} Redis 다운         503 + DB 우회 없음 + 자동 복구
@@ -697,6 +774,8 @@ main() {
             7) action_load_all || true;       press_enter_to_continue ;;
             8) action_partial_redis || true;  press_enter_to_continue ;;
             9) action_partial_instance || true; press_enter_to_continue ;;
+            s|S) action_load_stress || true;  press_enter_to_continue ;;
+            b|B) action_load_burst || true;   press_enter_to_continue ;;
             g|G) action_observability_toggle || true; press_enter_to_continue ;;
             r|R) action_restart || true;      press_enter_to_continue ;;
             c|C) action_teardown_and_exit ;;
