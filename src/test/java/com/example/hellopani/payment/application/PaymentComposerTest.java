@@ -2,6 +2,7 @@ package com.example.hellopani.payment.application;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import com.example.hellopani.payment.domain.ChargeOutcome;
 import com.example.hellopani.payment.domain.ChargeRequest;
@@ -14,11 +15,13 @@ import com.example.hellopani.payment.domain.PaymentValidator;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@DisplayName("PaymentComposer — 순차 charge / 역순 refund / RESULT_PENDING 분기")
 class PaymentComposerTest {
 
     private final PaymentValidator validator = new PaymentValidator();
 
     @Test
+    @DisplayName("모든 component가 성공하면 AllSucceeded 반환, refund는 호출되지 않는다")
     void runsAllComponentsInOrderWhenAllSucceed() {
         StubMethod point = StubMethod.succeeding(PaymentMethodType.POINT, "ext-point");
         StubMethod card = StubMethod.succeeding(PaymentMethodType.CARD, "ext-card");
@@ -38,6 +41,7 @@ class PaymentComposerTest {
     }
 
     @Test
+    @DisplayName("ConfirmedFailure가 발생하면 그 전에 성공한 component를 역순으로 refund한다")
     void onConfirmedFailureRefundsPriorSuccessesInReverseOrder() {
         StubMethod point = StubMethod.succeeding(PaymentMethodType.POINT, "ext-point");
         StubMethod card = StubMethod.failing(PaymentMethodType.CARD, FailureReason.CARD_DECLINED);
@@ -57,6 +61,7 @@ class PaymentComposerTest {
     }
 
     @Test
+    @DisplayName("첫 component부터 ConfirmedFailure이면 refund 대상이 없다")
     void confirmedFailureOnFirstComponentDoesNotRefundAnyone() {
         StubMethod point = StubMethod.failing(PaymentMethodType.POINT, FailureReason.INSUFFICIENT_POINT);
         StubMethod card = StubMethod.succeeding(PaymentMethodType.CARD, "ext-card");
@@ -74,6 +79,7 @@ class PaymentComposerTest {
     }
 
     @Test
+    @DisplayName("ResultPending 발생 시 이미 성공한 component를 refund하지 않고 결과를 그대로 던진다 (Task 7로 위임)")
     void onResultPendingDoesNotRefundPriorSuccesses() {
         StubMethod point = StubMethod.succeeding(PaymentMethodType.POINT, "ext-point");
         StubMethod card = StubMethod.pending(PaymentMethodType.CARD, "ck-key");
@@ -93,6 +99,7 @@ class PaymentComposerTest {
     }
 
     @Test
+    @DisplayName("CARD + Y_PAY 금지 조합은 charge 시작 전 Validator가 즉시 거절한다")
     void rejectsCardPlusYPayBeforeChargeStarts() {
         StubMethod card = StubMethod.succeeding(PaymentMethodType.CARD, "x");
         StubMethod ypay = StubMethod.succeeding(PaymentMethodType.Y_PAY, "y");
@@ -108,6 +115,7 @@ class PaymentComposerTest {
     }
 
     @Test
+    @DisplayName("같은 PaymentMethodType이 두 Bean으로 등록되면 생성 시점에 IllegalStateException을 던진다")
     void rejectsDuplicatePaymentMethodTypeAtConstruction() {
         StubMethod card1 = StubMethod.succeeding(PaymentMethodType.CARD, "x");
         StubMethod card2 = StubMethod.succeeding(PaymentMethodType.CARD, "y");

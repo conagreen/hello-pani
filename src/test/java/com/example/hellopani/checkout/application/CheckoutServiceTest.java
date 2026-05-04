@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -31,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         CheckoutService.class,
         CheckoutServiceTest.FixedClockConfig.class
 })
+@DisplayName("CheckoutService — 주문서 발급 흐름과 만료 시각 / 멱등 / 부재 사용자 처리")
 class CheckoutServiceTest {
 
     static final Instant FIXED_INSTANT = Instant.parse("2026-05-01T00:00:00Z");
@@ -51,6 +53,7 @@ class CheckoutServiceTest {
     JdbcTemplate jdbcTemplate;
 
     @Test
+    @DisplayName("정상 주문서 발급 시 product / availablePoint / expiresAt(=now+10분) 모두 반환된다")
     void issuesCheckoutWithExpectedFields() {
         CheckoutResult result = checkoutService.issue("test-user-1", 1L);
 
@@ -62,6 +65,7 @@ class CheckoutServiceTest {
     }
 
     @Test
+    @DisplayName("발급된 Checkout은 ISSUED 상태와 quoted_price, available_point_snapshot으로 영속화된다")
     void persistsCheckoutWithIssuedStatusAndQuotedPrice() {
         CheckoutResult result = checkoutService.issue("test-user-1", 1L);
 
@@ -82,12 +86,14 @@ class CheckoutServiceTest {
     }
 
     @Test
+    @DisplayName("존재하지 않는 productId는 ProductNotFoundException을 던진다")
     void throwsWhenProductMissing() {
         assertThatThrownBy(() -> checkoutService.issue("test-user-1", 999L))
                 .isInstanceOf(ProductNotFoundException.class);
     }
 
     @Test
+    @DisplayName("PointAccount가 없는 신규 사용자도 availablePoint=0으로 정상 발급된다")
     void treatsMissingPointAccountAsZeroBalance() {
         CheckoutResult result = checkoutService.issue("brand-new-user", 1L);
 
@@ -99,6 +105,7 @@ class CheckoutServiceTest {
     }
 
     @Test
+    @DisplayName("GET Checkout은 비멱등: 같은 사용자가 다시 호출하면 새 checkoutId가 발급된다")
     void issuesDifferentCheckoutIdEachCall() {
         CheckoutResult first = checkoutService.issue("test-user-1", 1L);
         CheckoutResult second = checkoutService.issue("test-user-1", 1L);
@@ -107,6 +114,7 @@ class CheckoutServiceTest {
     }
 
     @Test
+    @DisplayName("발급된 Checkout 행에 user_id, product_id가 그대로 영속화된다")
     void persistsSubmittedUserIdAndProductId() {
         CheckoutResult result = checkoutService.issue("brand-new-user", 1L);
 

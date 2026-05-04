@@ -1,6 +1,7 @@
 package com.example.hellopani;
 
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -11,12 +12,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @JdbcTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@DisplayName("schema.sql 기반 8개 테이블과 seed 데이터 초기화 검증")
 class SchemaInitializationTest {
 
     @Autowired
     JdbcTemplate jdbcTemplate;
 
     @Test
+    @DisplayName("도메인 8개 테이블이 모두 생성된다")
     void allDomainTablesExist() {
         List<String> tables = List.of(
                 "PRODUCT", "STOCK", "CHECKOUT", "BOOKING",
@@ -31,6 +34,7 @@ class SchemaInitializationTest {
     }
 
     @Test
+    @DisplayName("seed 데이터(상품 1건, 재고 10, 테스트 사용자 포인트 50,000)가 적재된다")
     void seedDataLoaded() {
         Integer products = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product WHERE product_id = 1", Integer.class);

@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -21,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @JdbcTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PaymentRepository.class, PaymentComponentRepository.class})
+@DisplayName("PaymentComponentRepository — 결제 단위 영속화와 상태 전이")
 class PaymentComponentRepositoryTest {
 
     @Autowired
@@ -65,6 +67,7 @@ class PaymentComponentRepositoryTest {
     }
 
     @Test
+    @DisplayName("insertPending은 PaymentComponent를 PENDING으로 영속화한다 (externalTransactionId는 null)")
     void insertsPendingComponentAndReturnsId() {
         long componentId = componentRepository.insertPending(
                 paymentId, PaymentMethodType.POINT, 50000L);
@@ -80,6 +83,7 @@ class PaymentComponentRepositoryTest {
     }
 
     @Test
+    @DisplayName("markSucceeded는 component status를 SUCCEEDED로 바꾸고 외부 거래번호를 기록한다")
     void marksComponentSucceededWithExternalTxId() {
         long componentId = componentRepository.insertPending(
                 paymentId, PaymentMethodType.CARD, 100000L);
@@ -93,6 +97,7 @@ class PaymentComponentRepositoryTest {
     }
 
     @Test
+    @DisplayName("markFailed는 component status를 FAILED로 바꾼다 (확정 실패 component)")
     void marksComponentFailed() {
         long componentId = componentRepository.insertPending(
                 paymentId, PaymentMethodType.CARD, 100000L);
@@ -105,6 +110,7 @@ class PaymentComponentRepositoryTest {
     }
 
     @Test
+    @DisplayName("findByPaymentId는 INSERT 순서대로 component를 반환한다 (Composer 실행 순서와 일치)")
     void preservesInsertOrder() {
         componentRepository.insertPending(paymentId, PaymentMethodType.POINT, 50000L);
         componentRepository.insertPending(paymentId, PaymentMethodType.CARD, 100000L);

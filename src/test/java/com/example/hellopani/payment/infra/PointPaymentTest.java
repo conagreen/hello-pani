@@ -3,6 +3,7 @@ package com.example.hellopani.payment.infra;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -18,6 +19,7 @@ import com.example.hellopani.point.infra.PointRepository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
+@DisplayName("PointPayment — 잔액 차감 / 보상 / ledger 멱등 처리")
 class PointPaymentTest {
 
     @Autowired
@@ -54,6 +56,7 @@ class PointPaymentTest {
     }
 
     @Test
+    @DisplayName("정상 charge는 ledger(BOOKING_USE) 기록과 함께 잔액을 차감한다")
     void chargeDecrementsBalanceAndWritesLedger() {
         ChargeOutcome outcome = pointPayment.charge(req(20_000L));
 
@@ -64,6 +67,7 @@ class PointPaymentTest {
     }
 
     @Test
+    @DisplayName("잔액 부족 시 INSUFFICIENT_POINT를 반환하고 ledger insert까지 함께 롤백된다")
     void chargeFailsWhenBalanceInsufficient_andLedgerIsRolledBack() {
         ChargeOutcome outcome = pointPayment.charge(req(60_000L));
 
@@ -75,6 +79,7 @@ class PointPaymentTest {
     }
 
     @Test
+    @DisplayName("같은 checkoutId 재시도 시 ledger UNIQUE로 멱등 처리되어 잔액이 두 번 차감되지 않는다")
     void chargeIsIdempotentForSameCheckoutId() {
         pointPayment.charge(req(20_000L));
         ChargeOutcome second = pointPayment.charge(req(20_000L));
@@ -84,6 +89,7 @@ class PointPaymentTest {
     }
 
     @Test
+    @DisplayName("refund는 ledger(BOOKING_REFUND) 기록과 함께 잔액을 복구한다")
     void refundIncrementsBalanceAndWritesRefundLedger() {
         ChargeRequest request = req(20_000L);
         ChargeOutcome.Succeeded prior = (ChargeOutcome.Succeeded) pointPayment.charge(request);
@@ -96,6 +102,7 @@ class PointPaymentTest {
     }
 
     @Test
+    @DisplayName("같은 checkoutId로 refund를 두 번 호출해도 잔액이 중복 복구되지 않는다 (보상 멱등)")
     void refundIsIdempotentForSameCheckoutId() {
         ChargeRequest request = req(20_000L);
         ChargeOutcome.Succeeded prior = (ChargeOutcome.Succeeded) pointPayment.charge(request);

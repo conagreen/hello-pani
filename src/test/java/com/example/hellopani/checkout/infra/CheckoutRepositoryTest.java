@@ -1,6 +1,7 @@
 package com.example.hellopani.checkout.infra;
 
 import java.time.LocalDateTime;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -17,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @JdbcTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import(CheckoutRepository.class)
+@DisplayName("CheckoutRepository — 주문서 영속화와 PK 충돌")
 class CheckoutRepositoryTest {
 
     @Autowired
@@ -26,6 +28,7 @@ class CheckoutRepositoryTest {
     JdbcTemplate jdbcTemplate;
 
     @Test
+    @DisplayName("Checkout을 ISSUED 상태로 INSERT하고 컬럼을 모두 영속화한다")
     void insertsCheckoutRowWithIssuedStatus() {
         LocalDateTime now = LocalDateTime.now();
         Checkout checkout = new Checkout(
@@ -52,6 +55,7 @@ class CheckoutRepositoryTest {
     }
 
     @Test
+    @DisplayName("같은 checkoutId로 중복 INSERT하면 DuplicateKeyException을 던진다")
     void rejectsDuplicateCheckoutId() {
         LocalDateTime now = LocalDateTime.now();
         Checkout first = new Checkout(

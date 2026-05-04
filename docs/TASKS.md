@@ -171,23 +171,23 @@
 
 작업:
 
-- [ ] `StockGate` 인터페이스 정의
-- [ ] Redis Lua 기반 `stock:{productId}` 게이트 구현
-- [ ] `hold:{checkoutId}` 생성 정책 구현
-- [ ] Redis gate 실패 응답 모델 정의: `sold_out_or_processing`, `retryable`, `retryAfterSeconds`
-- [ ] DB 조건부 UPDATE 재고 선점 구현
-- [ ] DB stock 복구 구현
-- [ ] Redis gate 복구 구현
-- [ ] checkoutId 기준 보상 상태를 확인해 DB stock과 Redis gate 복구가 한 번만 실행되도록 구현
-- [ ] Redis 초기화 커맨드 또는 seed 초기화 로직 추가
+- [x] `StockGate` 인터페이스 정의
+- [x] Redis Lua 기반 `stock:{productId}` 게이트 구현
+- [x] `hold:{checkoutId}` 생성 정책 구현
+- [x] Redis gate 실패 응답 모델 정의: `sold_out_or_processing`, `retryable`, `retryAfterSeconds`
+- [x] DB 조건부 UPDATE 재고 선점 구현
+- [x] DB stock 복구 구현
+- [x] Redis gate 복구 구현
+- [x] checkoutId 기준 보상 상태를 확인해 DB stock과 Redis gate 복구가 한 번만 실행되도록 구현
+- [x] Redis 초기화 커맨드 또는 seed 초기화 로직 추가
 
 완료 조건:
 
-- [ ] Redis Lua 원자 차감 테스트 통과
-- [ ] Redis gate 10개 통과 후 11번째 실패 테스트 통과
-- [ ] DB 조건부 UPDATE가 qty 0 이하로 내려가지 않는지 테스트
+- [x] Redis Lua 원자 차감 테스트 통과
+- [x] Redis gate 10개 통과 후 11번째 실패 테스트 통과
+- [x] DB 조건부 UPDATE가 qty 0 이하로 내려가지 않는지 테스트
 - [ ] DB 선점 실패 시 Redis gate 복구 테스트 통과
-- [ ] 같은 checkoutId로 stock / Redis gate 복구를 반복 호출해도 재고가 중복 증가하지 않는지 테스트
+- [x] 같은 checkoutId로 stock / Redis gate 복구를 반복 호출해도 재고가 중복 증가하지 않는지 테스트
 - [ ] 동시성 테스트에서 성공 예약 가능 수가 10개를 넘지 않음
 
 설계 불변식:
@@ -213,26 +213,26 @@
 
 작업:
 
-- [ ] `PaymentMethod` 인터페이스 정의
-- [ ] `PointPayment`, `CardPayment`, `YPayPayment` 구현
-- [ ] Fake PG client 구현
-- [ ] `PaymentValidator` 구현: 카드 + Y페이 금지, 합계 검증
-- [ ] `PaymentComposer` 구현: 순차 실행, 역순 보상
-- [ ] PointAccount 차감 구현
-- [ ] PointLedger 기록과 멱등 제약 처리
-- [ ] Payment / PaymentComponent 상태 전이 구현
-- [ ] PG 멱등키로 checkoutId 전달
-- [ ] PG 결과 조회 인터페이스 추가
+- [x] `PaymentMethod` 인터페이스 정의
+- [x] `PointPayment`, `CardPayment`, `YPayPayment` 구현
+- [x] Fake PG client 구현
+- [x] `PaymentValidator` 구현: 카드 + Y페이 금지, 합계 검증
+- [x] `PaymentComposer` 구현: 순차 실행, 역순 보상
+- [x] PointAccount 차감 구현
+- [x] PointLedger 기록과 멱등 제약 처리
+- [x] Payment / PaymentComponent 상태 전이 구현
+- [x] PG 멱등키로 checkoutId 전달
+- [x] PG 결과 조회 인터페이스 추가
 
 완료 조건:
 
-- [ ] 카드 단독 성공 테스트 통과
-- [ ] 포인트 단독 성공 테스트 통과
-- [ ] 포인트 + 카드 성공 테스트 통과
-- [ ] 카드 + Y페이 금지 테스트 통과
-- [ ] 포인트 차감 후 카드 실패 시 포인트 복구 테스트 통과
-- [ ] PG 타임아웃 또는 응답 미수신 시 `RESULT_PENDING` 테스트 통과
-- [ ] 같은 checkoutId 보상 재실행이 중복 복구를 만들지 않는지 테스트
+- [x] 카드 단독 성공 테스트 통과
+- [x] 포인트 단독 성공 테스트 통과
+- [x] 포인트 + 카드 성공 테스트 통과
+- [x] 카드 + Y페이 금지 테스트 통과
+- [x] 포인트 차감 후 카드 실패 시 포인트 복구 테스트 통과
+- [x] PG 타임아웃 또는 응답 미수신 시 `RESULT_PENDING` 테스트 통과
+- [x] 같은 checkoutId 보상 재실행이 중복 복구를 만들지 않는지 테스트
 
 설계 불변식:
 

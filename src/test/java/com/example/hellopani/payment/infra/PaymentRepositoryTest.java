@@ -3,6 +3,7 @@ package com.example.hellopani.payment.infra;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -19,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @JdbcTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import(PaymentRepository.class)
+@DisplayName("PaymentRepository — Payment 영속화와 상태 전이")
 class PaymentRepositoryTest {
 
     @Autowired
@@ -57,6 +59,7 @@ class PaymentRepositoryTest {
     }
 
     @Test
+    @DisplayName("insertProcessing은 Payment를 PROCESSING 상태로 영속화하고 자동 생성된 paymentId를 반환한다")
     void insertsProcessingPaymentAndReturnsGeneratedId() {
         long paymentId = paymentRepository.insertProcessing(
                 checkoutId, bookingId, "test-user-1", 150000L, checkoutId);
@@ -71,6 +74,7 @@ class PaymentRepositoryTest {
     }
 
     @Test
+    @DisplayName("updateStatus는 status만 변경하고 completed_at은 건드리지 않는다 (RESULT_PENDING 등 transient 상태 표기용)")
     void updatesStatusWithoutTouchingCompletedAt() {
         long paymentId = paymentRepository.insertProcessing(
                 checkoutId, bookingId, "test-user-1", 150000L, checkoutId);
@@ -84,6 +88,7 @@ class PaymentRepositoryTest {
     }
 
     @Test
+    @DisplayName("markCompleted는 status와 completed_at을 함께 기록한다 (SUCCEEDED / COMPENSATED)")
     void marksCompletedRecordsTimestamp() {
         long paymentId = paymentRepository.insertProcessing(
                 checkoutId, bookingId, "test-user-1", 150000L, checkoutId);
@@ -98,6 +103,7 @@ class PaymentRepositoryTest {
     }
 
     @Test
+    @DisplayName("checkoutId UNIQUE를 활용한 멱등 응답 재생을 위한 findByCheckoutId를 제공한다")
     void findsByCheckoutId() {
         long paymentId = paymentRepository.insertProcessing(
                 checkoutId, bookingId, "test-user-1", 150000L, checkoutId);
@@ -107,6 +113,7 @@ class PaymentRepositoryTest {
     }
 
     @Test
+    @DisplayName("존재하지 않는 paymentId는 빈 Optional을 반환한다")
     void returnsEmptyForUnknownPaymentId() {
         assertThat(paymentRepository.findById(999_999L)).isEmpty();
     }

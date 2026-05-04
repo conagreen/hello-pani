@@ -2,6 +2,7 @@ package com.example.hellopani.payment.infra;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import com.example.hellopani.payment.domain.ChargeOutcome;
 import com.example.hellopani.payment.domain.ChargeRequest;
@@ -14,9 +15,11 @@ import com.example.hellopani.payment.domain.PgPaymentInstrument;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@DisplayName("CardPayment — PgChargeResult를 ChargeOutcome으로 매핑")
 class CardPaymentTest {
 
     @Test
+    @DisplayName("PG Approved는 ChargeOutcome.Succeeded로 매핑되며 instrument=CARD로 호출된다")
     void mapsApprovedToSucceeded() {
         StubPgClient pg = new StubPgClient(new PgChargeResult.Approved("ext-1"));
         CardPayment card = new CardPayment(pg);
@@ -29,6 +32,7 @@ class CardPaymentTest {
     }
 
     @Test
+    @DisplayName("PG Declined는 reason과 함께 ChargeOutcome.ConfirmedFailure로 매핑된다")
     void mapsDeclinedToConfirmedFailure() {
         StubPgClient pg = new StubPgClient(new PgChargeResult.Declined(FailureReason.CARD_DECLINED));
         CardPayment card = new CardPayment(pg);
@@ -41,6 +45,7 @@ class CardPaymentTest {
     }
 
     @Test
+    @DisplayName("PG Pending은 멱등키와 함께 ChargeOutcome.ResultPending으로 매핑된다 (보상 보류 신호)")
     void mapsPendingToResultPending() {
         StubPgClient pg = new StubPgClient(new PgChargeResult.Pending("ck-1"));
         CardPayment card = new CardPayment(pg);
@@ -52,6 +57,7 @@ class CardPaymentTest {
     }
 
     @Test
+    @DisplayName("refund는 PG에 checkoutId(=pgIdempotencyKey)로 환불을 위임한다")
     void refundDelegatesPgRefundWithCheckoutIdAsKey() {
         StubPgClient pg = new StubPgClient(new PgChargeResult.Approved("ext-1"));
         CardPayment card = new CardPayment(pg);

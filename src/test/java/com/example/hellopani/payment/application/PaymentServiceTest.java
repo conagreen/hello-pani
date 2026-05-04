@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Objects;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -28,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
+@DisplayName("PaymentService — 결제 도메인 통합 시나리오 (TASKS Task 5 완료 조건 7개)")
 class PaymentServiceTest {
 
     @Autowired
@@ -92,6 +94,7 @@ class PaymentServiceTest {
     }
 
     @Test
+    @DisplayName("[완료조건] 카드 단독 결제 — Payment SUCCEEDED, component SUCCEEDED + externalTxId 기록")
     void cardOnly_succeeds() {
         PaymentExecutionResult result = paymentService.execute(new PaymentExecutionContext(
                 checkoutId, bookingId, "test-user-1", 150_000L,
@@ -110,6 +113,7 @@ class PaymentServiceTest {
     }
 
     @Test
+    @DisplayName("[완료조건] 포인트 단독 결제 — 잔액 0으로 차감, Payment SUCCEEDED")
     void pointOnly_succeeds() {
         PaymentExecutionResult result = paymentService.execute(new PaymentExecutionContext(
                 checkoutId, bookingId, "test-user-1", 50_000L,
@@ -122,6 +126,7 @@ class PaymentServiceTest {
     }
 
     @Test
+    @DisplayName("[완료조건] 포인트 + 카드 복합 결제 — 두 component 모두 SUCCEEDED, Payment SUCCEEDED")
     void pointPlusCard_succeeds() {
         PaymentExecutionResult result = paymentService.execute(new PaymentExecutionContext(
                 checkoutId, bookingId, "test-user-1", 150_000L,
@@ -141,6 +146,7 @@ class PaymentServiceTest {
     }
 
     @Test
+    @DisplayName("[완료조건] 카드 + Y페이 금지 — charge 시작 전 InvalidCompositionException")
     void cardPlusYPay_isRejectedByValidator() {
         PaymentExecutionContext ctx = new PaymentExecutionContext(
                 checkoutId, bookingId, "test-user-1", 150_000L,
@@ -154,6 +160,7 @@ class PaymentServiceTest {
     }
 
     @Test
+    @DisplayName("component 합계 ≠ totalAmount는 AmountMismatchException으로 거절된다")
     void amountMismatch_isRejectedByValidator() {
         PaymentExecutionContext ctx = new PaymentExecutionContext(
                 checkoutId, bookingId, "test-user-1", 150_000L,
@@ -164,6 +171,7 @@ class PaymentServiceTest {
     }
 
     @Test
+    @DisplayName("[완료조건] 포인트 차감 후 카드 거절 — 포인트 자동 복구, Payment COMPENSATED, 카드 component FAILED")
     void pointSucceededThenCardDeclined_refundsPoint_andMarksCompensated() {
         long cardAmount = FakePgClient.TRIGGER_CARD_DECLINED;
         long pointAmount = 50_000L;
@@ -195,6 +203,7 @@ class PaymentServiceTest {
     }
 
     @Test
+    @DisplayName("[완료조건] PG 응답 미수신 — 즉시 보상하지 않고 Payment RESULT_PENDING, 포인트 차감 그대로 (Task 7 대기)")
     void cardPgPending_marksPaymentResultPending_withoutRefund() {
         long cardAmount = FakePgClient.TRIGGER_RESULT_PENDING;
         long pointAmount = 50_000L;
@@ -211,7 +220,6 @@ class PaymentServiceTest {
         assertThat(pending.pendingAt()).isEqualTo(PaymentMethodType.CARD);
         assertThat(pending.pgIdempotencyKey()).isEqualTo(checkoutId);
 
-        // 포인트는 차감된 상태 (refund 안 함)
         assertThat(pointRepository.findByUserId("test-user-1").orElseThrow().balance()).isZero();
 
         Payment payment = paymentRepository.findById(result.paymentId()).orElseThrow();
