@@ -1,16 +1,31 @@
 # 부하 테스트 1-pager
 
-`./scripts/test-load.sh` 한 줄로 피크 부하를 돌리고 `build/load-report.md`를 만든다.
+`./scripts/test-load.sh` 한 줄로 피크 부하를 돌리고 `build/load-report-${SCENARIO}.md`를 만든다.
 
 ## TL;DR
 
 ```bash
-./scripts/test-load.sh
-# 끝나면 build/load-report.md 열어서 본다.
+./scripts/test-load.sh                 # 기본: rush 시나리오
+SCENARIO=browse ./scripts/test-load.sh # 평시 / 오픈 대기 패턴
+SCENARIO=spike  ./scripts/test-load.sh # 대기 → 풀림 → 폭주 2-phase
+# 끝나면 build/load-report-${SCENARIO}.md 열어서 본다.
 ```
 
-기본값: 1,000 RPS / 60초 / ramp-up 15초.
 이 시스템은 거절 경로(Redis Lua → 5–10ms)가 본업이라, 노트북에서도 1,000 RPS 도달이 가능하다.
+
+## 시나리오
+
+| 이름 | 패턴 | 기본값 | 보고서 파일 |
+|---|---|---|---|
+| `rush` (기본) | 오픈 직후 즉시 구매. 매 iteration GET + POST | 1,000 RPS / 60s | `build/load-report-rush.md` |
+| `browse` | 오픈 대기 새로고침. GET /checkout만 도배 | 300 RPS / 60s | `build/load-report-browse.md` |
+| `spike` | browse → rush 2-phase | 200/30s → 1,000/30s | `build/load-report-spike.md` |
+
+대시보드 "엔드포인트별 트래픽" 패널을 보면 시나리오가 즉시 구분된다.
+
+- `rush`: GET / POST 둘 다 동시에 치솟음
+- `browse`: GET 라인만 활성, POST는 0
+- `spike`: GET 라인이 먼저 살아있다가 일정 시점에 POST 라인이 폭발
 
 ## 통과 기준
 
@@ -69,6 +84,42 @@ SPRING_DATA_REDIS_PORT=6379
 ```
 
 이미지는 `./gradlew bootBuildImage`로 만든다 (Spring Boot built-in, Buildpack 기반).
+
+## 실시간 시각화 (선택 — Prometheus + Grafana)
+
+부하 진행을 차트로 보고 싶으면 별도 compose 파일을 함께 띄운다. 기본 데모 경로엔 영향 없다.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+./gradlew bootRun                                 # 호스트에서 앱 실행
+./scripts/test-load.sh                            # 다른 셸에서 부하
+open http://localhost:3000                        # admin/admin
+```
+
+`hello-pani — 한정 재고 선착순 시스템` 대시보드가 자동 provisioning 된다. 5개 Row, 23개 패널:
+
+- **결과 요약** — 현재 시간 범위 내 CONFIRMED / 보상 실패 / 503 / DB 선점 (`increase($__range)` 기반이라 부하별로 자동 리셋)
+- **Booking 트래픽** — 엔드포인트별 트래픽(GET vs POST, 시나리오 식별), Redis gate rate, /bookings 응답 코드별 rate, latency p50/p95/p99, 결제 실패 분류
+- **앱 부하** — JVM heap, GC pause, CPU 사용률, Hikari pool, Resilience4j Redis 회로 상태
+- **MySQL 부하** — 쿼리 처리량 (select/insert/update + 시스템에서 발생하는 SQL 종류 description), 연결 수, slow query 누계, InnoDB 디스크 I/O, SQL row 처리량(rows_examined / rows_sent)
+- **Redis 부하** — 명령 처리량, keyspace hits/misses, 메모리, 연결 클라이언트 수
+
+대시보드 새로고침은 5초 간격이라 부하 진행 동안 거절 99.99% / 통과 10건이 한눈에 보이고, 동시에 인프라 부하가 어떻게 움직이는지(=거절 경로 본업이라 MySQL은 대부분 idle, Redis만 분주)가 같이 드러난다.
+
+> **MySQL exporter 권한 노트**: perf_schema digest 통계를 읽으려면 `hellopani` 계정에 PROCESS / REPLICATION CLIENT / performance_schema SELECT 권한이 필요하다. `observability/mysql-init/grant-exporter.sql`이 mysql 컨테이너 첫 기동 시 자동 적용되며, 이미 데이터 볼륨이 있는 상태로 observability를 추가하는 경우 한 번 수동 실행이 필요하다:
+>
+> ```bash
+> docker exec -i hello-pani-mysql-1 mysql -u root -proot < observability/mysql-init/grant-exporter.sql
+> ```
+
+정리:
+
+```bash
+./scripts/docker-clean.sh                       # 컨테이너만 정지 (볼륨 유지)
+./scripts/docker-clean.sh --observability-only  # Prometheus/Grafana/exporter만
+./scripts/docker-clean.sh --all                 # 다 내림
+./scripts/docker-clean.sh --volumes             # 데이터까지 완전 삭제
+```
 
 ## 운영 시 주의
 

@@ -363,7 +363,7 @@ CREATE TABLE IF NOT EXISTS compensation_step (
 ./scripts/test-all.sh          # ./gradlew test --rerun-tasks + k6 2종
 ```
 
-피크 부하 시나리오와 보고서는 [docs/LOAD.md](docs/LOAD.md)에 한 페이지로 정리되어 있다.
+피크 부하 시나리오와 보고서는 [docs/LOAD.md](docs/LOAD.md)에 한 페이지로 정리되어 있다. 실시간 시각화(Prometheus + Grafana)도 같은 문서에 옵션으로 안내한다.
 
 통과 기준 (k6 thresholds 자동 검증):
 

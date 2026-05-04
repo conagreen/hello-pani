@@ -230,9 +230,15 @@ DB 스키마와 seed는 `schema.sql`이 단일 원천이다.
 
 하지 않는 것:
 
-- Prometheus remote-write / Grafana dashboard 기본 제공
 - k6 spike / Redis 장애 자동 시나리오
 - 실제 PG 응답시간 계측
 - 운영자용 잔여 재고 API
 
 이 항목들은 선택 확장이다.
+
+선택 확장 — Prometheus + Grafana:
+
+- `/actuator/prometheus`로 Micrometer 메트릭을 노출한다.
+- `docker-compose.observability.yml` + `observability/` 디렉토리에 Prometheus / Grafana 설정과 사전 provisioning 대시보드를 포함했다.
+- 기본 데모 경로(`./gradlew bootRun` + `./scripts/test-load.sh`)에는 추가 부담을 주지 않는다. 사용법은 [LOAD.md](LOAD.md)의 "실시간 시각화" 단락.
+- 

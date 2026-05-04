@@ -20,7 +20,12 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
+  metrics:
+    distribution:
+      # Grafana 대시보드의 histogram_quantile()이 동작하려면 bucket이 노출되어야 한다.
+      percentiles-histogram:
+        http.server.requests: true
   endpoint:
     health:
       show-details: always

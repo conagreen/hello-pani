@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: hello-pani
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # 멀티 인스턴스 환경 (docker-compose.scale.yml). review.sh가 기본 진입점.
+      # 호스트 bootRun(host.docker.internal:8080)을 같이 쓰고 싶으면 직접 추가하라 —
+      # 같이 두면 bootRun 종료 시 stale series가 5분간 패널을 어지럽힌다.
+      - targets:
+          - app-1:8080
+          - app-2:8080
+
+  - job_name: redis
+    static_configs:
+      - targets:
+          - redis-exporter:9121
+
+  - job_name: mysql
+    static_configs:
+      - targets:
+          - mysql-exporter:9104
