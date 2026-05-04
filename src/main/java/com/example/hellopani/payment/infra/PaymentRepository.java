@@ -63,10 +63,31 @@ public class PaymentRepository {
                 status.name(), paymentId);
     }
 
+    /**
+     * 현재 status가 {@code from}일 때만 {@code to}로 전이한다. 영향 row를 반환해
+     * 호출자가 전이 발생 여부를 확인할 수 있게 한다 (멱등 보상 흐름의 상태 전이용).
+     */
+    public int updateStatusIfCurrent(long paymentId, PaymentStatus from, PaymentStatus to) {
+        return jdbcTemplate.update(
+                "UPDATE payment SET status = ? WHERE payment_id = ? AND status = ?",
+                to.name(), paymentId, from.name());
+    }
+
     public int markCompleted(long paymentId, PaymentStatus status, LocalDateTime completedAt) {
         return jdbcTemplate.update(
                 "UPDATE payment SET status = ?, completed_at = ? WHERE payment_id = ?",
                 status.name(), completedAt, paymentId);
+    }
+
+    /**
+     * 현재 status가 {@code from}일 때만 {@code to} + completedAt으로 전이한다.
+     * 보상 사이클 종료(COMPENSATING → COMPENSATED)에 사용한다.
+     */
+    public int markCompletedIfCurrent(long paymentId, PaymentStatus from, PaymentStatus to,
+                                      LocalDateTime completedAt) {
+        return jdbcTemplate.update(
+                "UPDATE payment SET status = ?, completed_at = ? WHERE payment_id = ? AND status = ?",
+                to.name(), completedAt, paymentId, from.name());
     }
 
     public Optional<Payment> findById(long paymentId) {

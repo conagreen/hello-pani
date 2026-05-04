@@ -111,6 +111,33 @@ class PaymentValidatorTest {
     }
 
     @Test
+    @DisplayName("같은 결제 수단이 두 번 들어오면 InvalidCompositionException을 던진다 (component id 덮어쓰기 방지)")
+    void rejectsDuplicateMethod() {
+        List<ChargeRequest> requests = List.of(
+                new ChargeRequest("ck", "u", PaymentMethodType.CARD, 50_000L),
+                new ChargeRequest("ck", "u", PaymentMethodType.CARD, 100_000L)
+        );
+
+        assertThatThrownBy(() -> validator.validate(requests, 150_000L))
+                .isInstanceOf(InvalidCompositionException.class)
+                .hasMessageContaining("Duplicate")
+                .hasMessageContaining("CARD");
+    }
+
+    @Test
+    @DisplayName("POINT가 두 번 들어와도 같은 정책으로 거절된다")
+    void rejectsDuplicatePoint() {
+        List<ChargeRequest> requests = List.of(
+                new ChargeRequest("ck", "u", PaymentMethodType.POINT, 30_000L),
+                new ChargeRequest("ck", "u", PaymentMethodType.POINT, 20_000L)
+        );
+
+        assertThatThrownBy(() -> validator.validate(requests, 50_000L))
+                .isInstanceOf(InvalidCompositionException.class)
+                .hasMessageContaining("Duplicate");
+    }
+
+    @Test
     @DisplayName("ChargeOutcome sealed의 모든 variant에서 type()이 노출된다")
     void chargeOutcomeTypeIsAccessibleOnAllVariants() {
         ChargeOutcome a = new ChargeOutcome.Succeeded(PaymentMethodType.CARD, "ext-1");

@@ -11,12 +11,15 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.example.hellopani.booking.application.BookingResultPayload;
+import com.example.hellopani.booking.application.IdempotencyService;
 import com.example.hellopani.booking.domain.Booking;
 import com.example.hellopani.booking.infra.BookingRepository;
 import com.example.hellopani.checkout.infra.CheckoutRepository;
 import com.example.hellopani.compensation.application.CompensationContext;
 import com.example.hellopani.compensation.application.CompensationService;
 import com.example.hellopani.inventory.application.InventoryProperties;
+import com.example.hellopani.payment.domain.FailureReason;
 import com.example.hellopani.payment.domain.Payment;
 import com.example.hellopani.payment.domain.PaymentComponent;
 import com.example.hellopani.payment.domain.PaymentComponentStatus;
@@ -26,6 +29,7 @@ import com.example.hellopani.payment.domain.PgChargeResult;
 import com.example.hellopani.payment.domain.PgClient;
 import com.example.hellopani.payment.infra.PaymentComponentRepository;
 import com.example.hellopani.payment.infra.PaymentRepository;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class PaymentResolutionJob {
@@ -42,6 +46,8 @@ public class PaymentResolutionJob {
     private final InventoryProperties inventoryProperties;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
+    private final IdempotencyService idempotencyService;
+    private final ObjectMapper objectMapper;
 
     public PaymentResolutionJob(PaymentRepository paymentRepository,
                                 PaymentComponentRepository componentRepository,
@@ -52,7 +58,9 @@ public class PaymentResolutionJob {
                                 StringRedisTemplate redisTemplate,
                                 InventoryProperties inventoryProperties,
                                 PlatformTransactionManager transactionManager,
-                                Clock clock) {
+                                Clock clock,
+                                IdempotencyService idempotencyService,
+                                ObjectMapper objectMapper) {
         this.paymentRepository = paymentRepository;
         this.componentRepository = componentRepository;
         this.bookingRepository = bookingRepository;
@@ -63,6 +71,8 @@ public class PaymentResolutionJob {
         this.inventoryProperties = inventoryProperties;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.clock = clock;
+        this.idempotencyService = idempotencyService;
+        this.objectMapper = objectMapper;
     }
 
     @Scheduled(fixedDelayString = "${app.payment.resolution-interval-ms:30000}")
@@ -99,25 +109,44 @@ public class PaymentResolutionJob {
             bookingRepository.markConfirmed(payment.bookingId(), LocalDateTime.now(clock));
             checkoutRepository.markUsed(payment.checkoutId());
         });
+        // PENDING 응답을 받았던 사용자가 같은 checkoutId로 재요청하면 최신 CONFIRMED 결과를 보게 한다.
+        refreshCachedResult(payment, BookingResultPayload.STATUS_CONFIRMED, null);
     }
 
     private void compensateFailed(Payment payment) {
         long pointAmount = pointAmountToRefund(payment);
         Booking booking = bookingRepository.findById(payment.bookingId()).orElseThrow();
 
+        // RESULT_PENDING → FAILED 마킹 + booking FAILED 마킹. COMPENSATING / COMPENSATED 전이는
+        // CompensationService가 DB stock + Redis gate 복구를 끝낸 뒤에 닫는다.
         transactionTemplate.executeWithoutResult(status -> {
             for (PaymentComponent component : componentRepository.findByPaymentId(payment.paymentId())) {
                 if (component.status() == PaymentComponentStatus.PENDING) {
                     componentRepository.markFailed(component.paymentComponentId());
                 }
             }
-            paymentRepository.markCompleted(payment.paymentId(), PaymentStatus.COMPENSATED, LocalDateTime.now(clock));
+            paymentRepository.markCompleted(payment.paymentId(), PaymentStatus.FAILED, LocalDateTime.now(clock));
             bookingRepository.markFailed(payment.bookingId());
         });
 
         compensationService.compensate(new CompensationContext(
                 payment.checkoutId(), payment.userId(), booking.productId(),
                 pointAmount, payment.paymentId()));
+        refreshCachedResult(payment, BookingResultPayload.STATUS_FAILED,
+                FailureReason.CARD_DECLINED.name());
+    }
+
+    private void refreshCachedResult(Payment payment, String status, String reason) {
+        BookingResultPayload payload = new BookingResultPayload(
+                payment.checkoutId(), status, payment.bookingId(), payment.paymentId(), reason);
+        try {
+            idempotencyService.completeWithResult(
+                    payment.checkoutId(), objectMapper.writeValueAsString(payload));
+        } catch (RuntimeException e) {
+            // Redis 장애 시에도 PG 결과 마감 자체는 진행한다. 다음 PaymentResolutionJob 사이클에서 다시 시도한다.
+            log.warn("Failed to refresh idempotency cache for checkoutId={}: {}",
+                    payment.checkoutId(), e.getMessage());
+        }
     }
 
     private long pointAmountToRefund(Payment payment) {

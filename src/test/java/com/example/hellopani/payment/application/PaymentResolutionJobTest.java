@@ -235,4 +235,44 @@ class PaymentResolutionJobTest {
         Payment after = paymentRepository.findById(paymentId).orElseThrow();
         assertThat(after.status()).isEqualTo(PaymentStatus.SUCCEEDED);
     }
+
+    @Test
+    @DisplayName("[캐시 갱신] Approved 확정 후 idempotency:result 캐시가 CONFIRMED payload로 덮어써진다")
+    void resolveApproved_refreshesIdempotencyCacheToConfirmed() {
+        // 사용자가 PENDING 응답을 받았던 상황을 재현 — idempotency 캐시에 PENDING payload가 들어 있다.
+        String pendingPayload = "{\"checkoutId\":\"" + checkoutId + "\",\"status\":\"PENDING\","
+                + "\"bookingId\":" + bookingId + ",\"paymentId\":" + paymentId + ","
+                + "\"message\":\"Payment result is being verified\"}";
+        redisTemplate.opsForValue().set("idempotency:result:" + checkoutId, pendingPayload);
+        redisTemplate.opsForValue().set("idempotency:" + checkoutId, "done");
+
+        fakePgClient.primeResult(checkoutId, new PgChargeResult.Approved("pg-tx-confirm"));
+        Payment pending = paymentRepository.findById(paymentId).orElseThrow();
+        job.resolveOne(pending);
+
+        // 캐시가 CONFIRMED로 갱신되어야 같은 checkoutId 재요청이 최신 결과를 본다.
+        String cached = redisTemplate.opsForValue().get("idempotency:result:" + checkoutId);
+        assertThat(cached).isNotNull();
+        assertThat(cached).contains("\"status\":\"CONFIRMED\"");
+        assertThat(cached).doesNotContain("\"status\":\"PENDING\"");
+    }
+
+    @Test
+    @DisplayName("[캐시 갱신] Declined 확정 후 idempotency:result 캐시가 FAILED payload로 덮어써진다")
+    void resolveDeclined_refreshesIdempotencyCacheToFailed() {
+        String pendingPayload = "{\"checkoutId\":\"" + checkoutId + "\",\"status\":\"PENDING\","
+                + "\"bookingId\":" + bookingId + ",\"paymentId\":" + paymentId + ","
+                + "\"message\":\"Payment result is being verified\"}";
+        redisTemplate.opsForValue().set("idempotency:result:" + checkoutId, pendingPayload);
+        redisTemplate.opsForValue().set("idempotency:" + checkoutId, "done");
+
+        fakePgClient.primeResult(checkoutId, new PgChargeResult.Declined(FailureReason.CARD_DECLINED));
+        Payment pending = paymentRepository.findById(paymentId).orElseThrow();
+        job.resolveOne(pending);
+
+        String cached = redisTemplate.opsForValue().get("idempotency:result:" + checkoutId);
+        assertThat(cached).isNotNull();
+        assertThat(cached).contains("\"status\":\"FAILED\"");
+        assertThat(cached).doesNotContain("\"status\":\"PENDING\"");
+    }
 }

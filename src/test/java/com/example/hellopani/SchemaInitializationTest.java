@@ -1,6 +1,7 @@
 package com.example.hellopani;
 
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,15 @@ class SchemaInitializationTest {
 
     @Autowired
     JdbcTemplate jdbcTemplate;
+
+    // schema.sql의 seed는 ON DUPLICATE KEY UPDATE로 row 존재만 보장하고 qty / balance 같은 가변 컬럼은
+    // 운영 환경에서 매 부팅마다 되돌리지 않도록 갱신하지 않는다. 테스트가 다른 테스트의 잔여 상태에
+    // 결합되지 않도록, 검증 대상 컬럼을 명시적으로 복원한 뒤 검사한다.
+    @BeforeEach
+    void resetSeedColumns() {
+        jdbcTemplate.update("UPDATE stock SET qty = 10 WHERE product_id = 1");
+        jdbcTemplate.update("UPDATE point_account SET balance = 50000 WHERE user_id = 'test-user-1'");
+    }
 
     @Test
     @DisplayName("도메인 8개 테이블이 모두 생성된다")

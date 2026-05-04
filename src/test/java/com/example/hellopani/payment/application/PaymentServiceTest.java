@@ -172,8 +172,8 @@ class PaymentServiceTest {
     }
 
     @Test
-    @DisplayName("[완료조건] 포인트 차감 후 카드 거절 — 포인트 자동 복구, Payment COMPENSATED, 카드 component FAILED")
-    void pointSucceededThenCardDeclined_refundsPoint_andMarksCompensated() {
+    @DisplayName("[완료조건] 포인트 차감 후 카드 거절 — 포인트 자동 복구(Composer), Payment FAILED 마킹 (COMPENSATING/COMPENSATED 전이는 CompensationService 책임)")
+    void pointSucceededThenCardDeclined_refundsPoint_andMarksFailed() {
         long cardAmount = FakePgClient.TRIGGER_CARD_DECLINED;
         long pointAmount = 50_000L;
 
@@ -188,10 +188,13 @@ class PaymentServiceTest {
         assertThat(failed.reason()).isEqualTo(FailureReason.CARD_DECLINED);
         assertThat(failed.failedAt()).isEqualTo(PaymentMethodType.CARD);
 
+        // PaymentComposer가 역순 보상으로 PointPayment.refund를 호출해 잔액은 복구된다.
         assertThat(pointRepository.findByUserId("test-user-1").orElseThrow().balance()).isEqualTo(50_000L);
 
+        // PaymentService는 Payment를 FAILED로만 닫는다. COMPENSATING / COMPENSATED 전이는 CompensationService가
+        // DB stock + Redis gate 복구까지 끝낸 뒤에 발생한다 (CompensationServiceTest에서 검증).
         Payment payment = paymentRepository.findById(result.paymentId()).orElseThrow();
-        assertThat(payment.status()).isEqualTo(PaymentStatus.COMPENSATED);
+        assertThat(payment.status()).isEqualTo(PaymentStatus.FAILED);
 
         List<PaymentComponent> components = componentRepository.findByPaymentId(result.paymentId());
         PaymentComponent point = components.stream()

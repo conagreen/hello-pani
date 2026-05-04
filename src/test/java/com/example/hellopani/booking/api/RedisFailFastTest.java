@@ -23,6 +23,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -89,7 +90,9 @@ class RedisFailFastTest {
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("REDIS_UNAVAILABLE"))
                 .andExpect(jsonPath("$.retryable").value(true))
-                .andExpect(jsonPath("$.retryAfterSeconds").isNumber());
+                .andExpect(jsonPath("$.retryAfterSeconds").isNumber())
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(header().string("Retry-After", String.valueOf(5)));
 
         // DB stock 그대로 — 어떤 우회 차감도 발생하지 않음
         Integer stockQty = jdbcTemplate.queryForObject(

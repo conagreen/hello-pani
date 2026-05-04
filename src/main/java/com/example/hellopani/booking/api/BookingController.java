@@ -53,10 +53,14 @@ public class BookingController {
             case BookingExecutionResult.Pending p -> ResponseEntity.ok(new BookingResultPayload(
                     p.checkoutId(), BookingResultPayload.STATUS_PENDING,
                     p.bookingId(), p.paymentId(), "Payment result is being verified"));
-            case BookingExecutionResult.Rejected r -> ResponseEntity
-                    .status(toHttpStatus(r.code()))
-                    .body(new RejectionResponse(
-                            r.code().name(), r.retryable(), r.retryAfterSeconds(), r.message()));
+            case BookingExecutionResult.Rejected r -> {
+                ResponseEntity.BodyBuilder builder = ResponseEntity.status(toHttpStatus(r.code()));
+                if (r.retryable() && r.retryAfterSeconds() > 0) {
+                    builder.header("Retry-After", Integer.toString(r.retryAfterSeconds()));
+                }
+                yield builder.body(new RejectionResponse(
+                        r.code().name(), r.retryable(), r.retryAfterSeconds(), r.message()));
+            }
             case BookingExecutionResult.Replayed r -> {
                 BookingResultPayload cached = objectMapper.readValue(r.cachedJson(), BookingResultPayload.class);
                 yield ResponseEntity.ok(cached);

@@ -54,7 +54,10 @@ public class PaymentService {
                     componentRepository.markSucceeded(componentIds.get(s.type()), s.externalTransactionId());
                 }
                 componentRepository.markFailed(componentIds.get(cf.failedAt()));
-                paymentRepository.markCompleted(paymentId, PaymentStatus.COMPENSATED, LocalDateTime.now(clock));
+                // FAILED로만 마킹한다. COMPENSATING / COMPENSATED 전이는 CompensationService가 책임진다.
+                // PaymentService가 즉시 COMPENSATED로 마킹해 버리면 이후 stock / Redis 복구 사이의 크래시가
+                // 보상 미완 상태를 영구화할 수 있다.
+                paymentRepository.markCompleted(paymentId, PaymentStatus.FAILED, LocalDateTime.now(clock));
                 yield new PaymentExecutionResult.Failed(paymentId, cf.reason(), cf.failedAt());
             }
             case CompositionResult.ResultPending rp -> {

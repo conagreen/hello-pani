@@ -103,33 +103,44 @@ public class ExpiryCleanupJob {
                 // PaymentResolutionJob에 위임. 정리 잡은 건드리지 않음.
             }
             case PROCESSING -> {
-                // 비정상 장기 PROCESSING — 보상 진행
-                compensateAndExpire(checkout, booking, payment);
+                // 비정상 장기 PROCESSING — FAILED로 마킹한 뒤 보상 사이클로 위임.
+                markFailedThenCompensate(checkout, booking, payment);
             }
-            case FAILED, COMPENSATING, COMPENSATED, REFUND_FAILED -> {
-                // 이미 종료/진행 중인 보상 사이클. checkout만 만료 마킹.
+            case FAILED, COMPENSATING -> {
+                // 보상이 미완 상태로 남았을 수 있다 (서버 크래시 / 부분 실행).
+                // CompensationService는 step 기록 기준으로 멱등하므로 다시 호출해 사이클을 닫는다.
+                resumeCompensation(checkout, booking, payment);
+            }
+            case COMPENSATED, REFUND_FAILED -> {
+                // 보상 사이클 종료. checkout만 만료 마킹.
                 checkoutRepository.markExpired(checkout.checkoutId());
             }
         }
     }
 
-    private void compensateAndExpire(Checkout checkout, Booking booking, Payment payment) {
-        long pointAmount = pointAmountToRefund(payment);
-
+    private void markFailedThenCompensate(Checkout checkout, Booking booking, Payment payment) {
         transactionTemplate.executeWithoutResult(status -> {
             for (PaymentComponent c : componentRepository.findByPaymentId(payment.paymentId())) {
                 if (c.status() == PaymentComponentStatus.PENDING) {
                     componentRepository.markFailed(c.paymentComponentId());
                 }
             }
-            paymentRepository.markCompleted(payment.paymentId(), PaymentStatus.COMPENSATED, LocalDateTime.now(clock));
-            bookingRepository.markFailed(booking.bookingId());
-            checkoutRepository.markExpired(checkout.checkoutId());
+            paymentRepository.markCompleted(payment.paymentId(), PaymentStatus.FAILED, LocalDateTime.now(clock));
         });
+        resumeCompensation(checkout, booking, payment);
+    }
 
+    private void resumeCompensation(Checkout checkout, Booking booking, Payment payment) {
+        long pointAmount = pointAmountToRefund(payment);
         compensationService.compensate(new CompensationContext(
                 checkout.checkoutId(), checkout.userId(), checkout.productId(),
                 pointAmount, payment.paymentId()));
+        transactionTemplate.executeWithoutResult(status -> {
+            if (booking.status() == BookingStatus.PENDING_PAYMENT) {
+                bookingRepository.markFailed(booking.bookingId());
+            }
+            checkoutRepository.markExpired(checkout.checkoutId());
+        });
     }
 
     private long pointAmountToRefund(Payment payment) {

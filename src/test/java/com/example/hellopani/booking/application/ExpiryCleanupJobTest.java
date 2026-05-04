@@ -194,6 +194,82 @@ class ExpiryCleanupJobTest {
     }
 
     @Test
+    @DisplayName("[크래시 복구] Payment FAILED + DB stock 미복구(중간 크래시) → 보상 재실행으로 stock/Redis 복구 + COMPENSATED 마감")
+    void resumesCompensationWhenPaymentFailedButStockNotRestored() {
+        String checkoutId = createExpiredCheckout("test-user-1");
+        long bookingId = createBooking(checkoutId, "test-user-1", "PENDING_PAYMENT");
+        long paymentId = paymentRepository.insertProcessing(
+                checkoutId, bookingId, "test-user-1", 150000L, checkoutId);
+        long cardComponentId = componentRepository.insertPending(
+                paymentId, PaymentMethodType.CARD, 150000L);
+        componentRepository.markFailed(cardComponentId);
+
+        // PaymentService가 FAILED까지 마킹한 직후 서버 크래시한 상태를 시뮬레이션:
+        // - Payment FAILED, component FAILED
+        // - DB stock = 9 (선점 후 복구 안 됨)
+        // - Redis stock = 9 + hold:* 살아 있음
+        // - compensation_step 비어 있음 (보상 한 번도 안 돎)
+        paymentRepository.markCompleted(paymentId, PaymentStatus.FAILED, LocalDateTime.now());
+        jdbcTemplate.update("UPDATE stock SET qty = 9 WHERE product_id = 1");
+        redisTemplate.opsForValue().set("stock:1", "9");
+        redisTemplate.opsForHash().put("hold:" + checkoutId, "productId", "1");
+
+        // 만료 정리 잡이 미완 보상을 재개해야 한다.
+        Checkout pre = checkoutRepository.findById(checkoutId).orElseThrow();
+        job.cleanupOne(pre);
+
+        var payment = paymentRepository.findById(paymentId).orElseThrow();
+        assertThat(payment.status()).isEqualTo(PaymentStatus.COMPENSATED);
+
+        Integer dbStock = jdbcTemplate.queryForObject(
+                "SELECT qty FROM stock WHERE product_id = 1", Integer.class);
+        assertThat(dbStock).isEqualTo(10);
+        assertThat(redisTemplate.opsForValue().get("stock:1")).isEqualTo("10");
+        assertThat(redisTemplate.hasKey("hold:" + checkoutId)).isFalse();
+
+        String bookingStatus = jdbcTemplate.queryForObject(
+                "SELECT status FROM booking WHERE booking_id = ?", String.class, bookingId);
+        assertThat(bookingStatus).isEqualTo("FAILED");
+        Checkout after = checkoutRepository.findById(checkoutId).orElseThrow();
+        assertThat(after.status().name()).isEqualTo("EXPIRED");
+    }
+
+    @Test
+    @DisplayName("[크래시 복구] Payment COMPENSATING + 일부 step만 완료 → 정리 잡이 남은 step만 재실행하고 COMPENSATED로 닫는다")
+    void resumesCompensationWhenPartiallyCompleted() {
+        String checkoutId = createExpiredCheckout("test-user-1");
+        long bookingId = createBooking(checkoutId, "test-user-1", "PENDING_PAYMENT");
+        long paymentId = paymentRepository.insertProcessing(
+                checkoutId, bookingId, "test-user-1", 150000L, checkoutId);
+        long cardComponentId = componentRepository.insertPending(
+                paymentId, PaymentMethodType.CARD, 150000L);
+        componentRepository.markFailed(cardComponentId);
+
+        // 보상 1단계(DB_STOCK_RESTORED)는 끝났고 Redis 단계 직전 크래시한 시나리오.
+        paymentRepository.updateStatus(paymentId, PaymentStatus.COMPENSATING);
+        jdbcTemplate.update(
+                "INSERT INTO compensation_step (checkout_id, step) VALUES (?, ?)",
+                checkoutId, "DB_STOCK_RESTORED");
+        // DB stock은 이미 복구됨 (10), Redis는 미복구 (9 + hold).
+        redisTemplate.opsForValue().set("stock:1", "9");
+        redisTemplate.opsForHash().put("hold:" + checkoutId, "productId", "1");
+
+        Checkout pre = checkoutRepository.findById(checkoutId).orElseThrow();
+        job.cleanupOne(pre);
+
+        var payment = paymentRepository.findById(paymentId).orElseThrow();
+        assertThat(payment.status()).isEqualTo(PaymentStatus.COMPENSATED);
+
+        // DB stock은 그대로 10이어야 한다 (이미 복구된 step은 재실행되지 않음 — 멱등 검증).
+        Integer dbStock = jdbcTemplate.queryForObject(
+                "SELECT qty FROM stock WHERE product_id = 1", Integer.class);
+        assertThat(dbStock).isEqualTo(10);
+        // Redis는 복구되어야 한다.
+        assertThat(redisTemplate.opsForValue().get("stock:1")).isEqualTo("10");
+        assertThat(redisTemplate.hasKey("hold:" + checkoutId)).isFalse();
+    }
+
+    @Test
     @DisplayName("cleanupExpired는 만료된 Checkout 여러 건을 일괄 처리한다")
     void cleanupExpired_processesMultipleExpiredCheckouts() {
         createExpiredCheckout("test-user-1");

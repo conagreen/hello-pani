@@ -2,6 +2,8 @@ package com.example.hellopani.compensation.application;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -30,6 +32,7 @@ public class CompensationService {
     private final CompensationStepRepository stepRepository;
     private final PaymentRepository paymentRepository;
     private final TransactionTemplate transactionTemplate;
+    private final Clock clock;
     private final Counter refundFailedCounter;
 
     public CompensationService(PointPayment pointPayment,
@@ -38,6 +41,7 @@ public class CompensationService {
                                CompensationStepRepository stepRepository,
                                PaymentRepository paymentRepository,
                                PlatformTransactionManager transactionManager,
+                               Clock clock,
                                MeterRegistry meterRegistry) {
         this.pointPayment = pointPayment;
         this.stockRepository = stockRepository;
@@ -45,18 +49,27 @@ public class CompensationService {
         this.stepRepository = stepRepository;
         this.paymentRepository = paymentRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.clock = clock;
         this.refundFailedCounter = Counter.builder("compensation.refund_failed")
                 .description("Number of compensation attempts that ended with REFUND_FAILED")
                 .register(meterRegistry);
     }
 
     public void compensate(CompensationContext ctx) {
+        // FAILED → COMPENSATING 전이. 이미 COMPENSATING / COMPENSATED / REFUND_FAILED라면 0 row이고 그대로 진행.
+        // 멱등 재실행을 보장하기 위해 조건부 UPDATE를 쓴다.
+        paymentRepository.updateStatusIfCurrent(
+                ctx.paymentId(), PaymentStatus.FAILED, PaymentStatus.COMPENSATING);
         try {
             if (ctx.shouldRefundPoint()) {
                 compensatePoint(ctx);
             }
             compensateDbStock(ctx);
             compensateRedisGate(ctx);
+            // 3 단계 모두 성공 → COMPENSATING → COMPENSATED. 이미 COMPENSATED 또는 REFUND_FAILED면 0 row (멱등).
+            paymentRepository.markCompletedIfCurrent(
+                    ctx.paymentId(), PaymentStatus.COMPENSATING, PaymentStatus.COMPENSATED,
+                    LocalDateTime.now(clock));
         } catch (RuntimeException e) {
             markRefundFailed(ctx, e);
             throw e;
